@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { UserProfile, UserRole } from '../types';
+import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
+import { UserProfile, UserRole, Shop } from '../types';
 import {
   auth,
   subscribeAuthState,
@@ -10,8 +10,11 @@ import {
   setUserProfile,
   updateUserProfile as updateFirestoreUserProfile,
   getAllUsersFromFirestore,
+  setShopInFirestore,
+  setShopRequestInFirestore,
   SUPER_ADMIN_EMAIL
 } from '../services/firebase';
+import { MockDataService } from '../services/MockDataService';
 import { sendPasswordResetEmail } from 'firebase/auth';
 
 export interface MockConfirmationResult {
@@ -42,6 +45,7 @@ interface AuthContextType {
     city: string;
     address: string;
     description: string;
+    category?: string;
     logoUrl?: string;
     coverUrl?: string;
   }) => Promise<void>;
@@ -66,10 +70,11 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  const [userProfile, setUserProfileState] = useState<UserProfile | null>(null);
   const [activeRole, setActiveRole] = useState<UserRole>('customer');
   const [loading, setLoading] = useState<boolean>(true);
   const [hasAdmin, setHasAdmin] = useState<boolean | null>(null);
+  const pendingRoleRef = useRef<UserRole | null>(null);
 
   const checkAdminPresence = async (): Promise<boolean> => {
     try {
@@ -91,24 +96,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // Fetch user profile from Firestore users/{uid}
           let profile = await getUserProfile(fbUser.uid);
 
+          // Retry delay if profile creation in registerWithFirebase is still writing
+          if (!profile) {
+            await new Promise((res) => setTimeout(res, 400));
+            profile = await getUserProfile(fbUser.uid);
+          }
+
+          // Check MockDataService
+          if (!profile) {
+            const mockUser = MockDataService.getUserById(fbUser.uid);
+            if (mockUser) {
+              profile = mockUser;
+            }
+          }
+
           if (!profile) {
             // Auto create profile in Firestore if missing
             const cleanEmail = (fbUser.email || '').toLowerCase().trim();
             const isSuperAdmin = cleanEmail === SUPER_ADMIN_EMAIL;
+            const targetRole: UserRole = isSuperAdmin ? 'admin' : (pendingRoleRef.current || 'customer');
+            const initialStatus: 'pending' | 'active' = (targetRole === 'owner' && !isSuperAdmin) ? 'pending' : 'active';
             profile = {
               uid: fbUser.uid,
               email: cleanEmail,
-              displayName: fbUser.displayName || (isSuperAdmin ? 'مالك المنصة الرئيسي (برهام)' : cleanEmail.split('@')[0] || 'مستخدم المنصة'),
+              displayName: fbUser.displayName || (isSuperAdmin ? 'مالك المنصة الرئيسي (برهم)' : cleanEmail.split('@')[0] || 'مستخدم المنصة'),
               phoneNumber: fbUser.phoneNumber || '',
-              role: isSuperAdmin ? 'admin' : 'customer',
+              role: targetRole,
               createdAt: new Date().toISOString(),
-              status: 'active'
+              status: initialStatus
             };
             await setUserProfile(profile);
+            MockDataService.addUser(profile);
           }
 
           setCurrentUser(profile);
-          setUserProfile(profile);
+          setUserProfileState(profile);
           setActiveRole(profile.role);
           if (profile.role === 'admin') {
             setHasAdmin(true);
@@ -118,7 +140,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else {
         setCurrentUser(null);
-        setUserProfile(null);
+        setUserProfileState(null);
         setActiveRole('customer');
       }
       setLoading(false);
@@ -131,8 +153,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setLoading(true);
     try {
       const { profile } = await loginWithFirebase(email, pass);
+      if (profile.email === SUPER_ADMIN_EMAIL) {
+        localStorage.setItem('super_admin_session', 'true');
+      } else {
+        localStorage.removeItem('super_admin_session');
+      }
       setCurrentUser(profile);
-      setUserProfile(profile);
+      setUserProfileState(profile);
       setActiveRole(profile.role);
       if (profile.role === 'admin') {
         setHasAdmin(true);
@@ -150,6 +177,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     photoURL?: string;
   }): Promise<void> => {
     setLoading(true);
+    pendingRoleRef.current = 'customer';
     try {
       const profile = await registerWithFirebase(
         data.email,
@@ -163,9 +191,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         profile.photoURL = data.photoURL;
       }
       setCurrentUser(profile);
-      setUserProfile(profile);
+      setUserProfileState(profile);
       setActiveRole('customer');
     } finally {
+      pendingRoleRef.current = null;
       setLoading(false);
     }
   };
@@ -179,10 +208,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     city: string;
     address: string;
     description: string;
+    category?: string;
     logoUrl?: string;
     coverUrl?: string;
   }): Promise<void> => {
     setLoading(true);
+    pendingRoleRef.current = 'owner';
     try {
       const generatedShopId = `shop_${Date.now()}`;
       const profile = await registerWithFirebase(
@@ -193,10 +224,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data.phone,
         generatedShopId
       );
+
+      profile.status = 'pending';
+      profile.shopId = generatedShopId;
+      await updateFirestoreUserProfile(profile.uid, { status: 'pending', shopId: generatedShopId });
+      MockDataService.updateUser(profile.uid, { status: 'pending', shopId: generatedShopId });
+
+      // DO NOT create a Shop record yet. Only create ShopRequest and pending UserProfile.
+      // The Shop will be created in Firestore/shops ONLY after the Super Admin approves the request.
+      const reqObj = {
+        id: `req_${Date.now()}`,
+        shopName: data.shopName,
+        ownerName: data.ownerName,
+        phone: data.phone,
+        email: data.email,
+        city: data.city,
+        address: data.address,
+        description: data.description,
+        category: data.category || 'هواتف',
+        logoUrl: data.logoUrl,
+        ownerId: profile.uid,
+        status: 'pending' as const,
+        createdAt: new Date().toISOString()
+      };
+      MockDataService.addShopRequest(reqObj);
+
+      try {
+        await setShopRequestInFirestore(reqObj);
+        console.log('[Register Owner Success] Saved shopRequest to Firestore (awaiting Super Admin approval)');
+      } catch (e) {
+        console.warn('Firestore setShopRequest error:', e);
+      }
+
       setCurrentUser(profile);
-      setUserProfile(profile);
+      setUserProfileState(profile);
       setActiveRole('owner');
     } finally {
+      pendingRoleRef.current = null;
       setLoading(false);
     }
   };
@@ -208,15 +272,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     role: UserRole
   ): Promise<void> => {
     setLoading(true);
+    pendingRoleRef.current = role;
     try {
       const profile = await registerWithFirebase(email, pass, name, role);
       setCurrentUser(profile);
-      setUserProfile(profile);
+      setUserProfileState(profile);
       setActiveRole(role);
       if (role === 'admin') {
         setHasAdmin(true);
       }
     } finally {
+      pendingRoleRef.current = null;
       setLoading(false);
     }
   };
@@ -228,6 +294,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     phone: string;
   }): Promise<void> => {
     setLoading(true);
+    pendingRoleRef.current = 'admin';
     try {
       const profile = await registerWithFirebase(
         data.email,
@@ -237,10 +304,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         data.phone
       );
       setCurrentUser(profile);
-      setUserProfile(profile);
+      setUserProfileState(profile);
       setActiveRole('admin');
       setHasAdmin(true);
     } finally {
+      pendingRoleRef.current = null;
       setLoading(false);
     }
   };
@@ -250,7 +318,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       await logoutFirebase();
       setCurrentUser(null);
-      setUserProfile(null);
+      setUserProfileState(null);
       setHasAdmin(false);
       setActiveRole('customer');
     } finally {
@@ -280,9 +348,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const logout = async (): Promise<void> => {
     setLoading(true);
     try {
+      localStorage.removeItem('super_admin_session');
       await logoutFirebase();
       setCurrentUser(null);
-      setUserProfile(null);
+      setUserProfileState(null);
       setActiveRole('customer');
     } finally {
       setLoading(false);
@@ -299,7 +368,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       await updateFirestoreUserProfile(currentUser.uid, updates);
       const updated = { ...currentUser, ...updates };
       setCurrentUser(updated);
-      setUserProfile(updated);
+      setUserProfileState(updated);
     }
   };
 

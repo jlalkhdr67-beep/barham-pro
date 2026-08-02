@@ -18,11 +18,11 @@ import { useAuth } from '../../context/AuthContext';
 export const InitialAdminSetup: React.FC = () => {
   const { registerFirstAdmin } = useAuth();
 
-  const [name, setName] = useState('مالك النظام الرئيسي');
-  const [email, setEmail] = useState('example@gmail.com');
-  const [phone, setPhone] = useState('07700000000');
-  const [password, setPassword] = useState('qazwsxedc');
-  const [confirmPassword, setConfirmPassword] = useState('qazwsxedc');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -132,7 +132,7 @@ export const InitialAdminSetup: React.FC = () => {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="المهندس برهام (المدير العام)"
+                placeholder="المهندس برهم (المدير العام)"
                 className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 pr-11 pl-4 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
               />
               <User className="w-4 h-4 text-slate-500 absolute right-4 top-3.5" />

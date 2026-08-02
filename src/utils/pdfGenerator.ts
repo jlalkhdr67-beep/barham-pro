@@ -216,7 +216,7 @@ export function printInvoicePDF(invoice: Invoice, formatSize: 'A4' | '88mm' | '4
     <div class="invoice-box">
       <div class="header">
         <div>
-          <div class="brand">Barham Pro | برهام برو</div>
+          <div class="brand">Barham Pro | برهم برو</div>
           <div style="font-size: 13px; color: #94a3b8; margin-top: 4px;">${invoice.shopName}</div>
           <div style="font-size: 12px; color: #64748b;">${invoice.shopAddress || ''} | هاتف: ${invoice.shopPhone || ''}</div>
         </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Smartphone, Wrench, Phone, Mail, MapPin, ShieldCheck, Heart } from 'lucide-react';
+import { Smartphone, Wrench, Phone, MapPin, ShieldCheck, Heart } from 'lucide-react';
 
 export const Footer: React.FC = () => {
   return (
@@ -52,15 +52,11 @@ export const Footer: React.FC = () => {
             <div className="space-y-3 text-xs">
               <div className="flex items-center gap-2.5 text-slate-300">
                 <MapPin className="w-4 h-4 text-blue-400 shrink-0" />
-                <span>العراق - بغداد - شارع فلسطين / أربيل</span>
+                <span>العراق - بغداد</span>
               </div>
               <div className="flex items-center gap-2.5 text-slate-300">
                 <Phone className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>0770 123 4567 (خدمة العملاء)</span>
-              </div>
-              <div className="flex items-center gap-2.5 text-slate-300">
-                <Mail className="w-4 h-4 text-purple-400 shrink-0" />
-                <span>support@barhampro.com</span>
+                <span dir="ltr">07755387770</span>
               </div>
             </div>
           </div>
@@ -68,10 +64,10 @@ export const Footer: React.FC = () => {
 
         <div className="border-t border-slate-900 pt-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-slate-500">
           <p>© 2026 Barham Pro. جميع الحقوق محفوظة لجمهورية العراق.</p>
-          <div className="flex items-center gap-1 text-slate-400">
+          <div className="flex items-center gap-1.5 text-slate-400">
             <span>تم التطوير بكل شغف بوساطة</span>
             <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500 mx-0.5" />
-            <span className="text-white font-bold">Barham Team</span>
+            <span className="text-white font-black tracking-widest text-sm bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent px-1">GRG</span>
           </div>
         </div>
       </div>

@@ -31,25 +31,27 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 }
 
 export async function setUserProfile(profile: UserProfile): Promise<void> {
+  const userDocRef = doc(db, USERS_COLLECTION, profile.uid);
+  // User requested document structure: uid, name, email, role, createdAt + profile details
+  const userData = {
+    uid: profile.uid,
+    name: profile.displayName || '',
+    displayName: profile.displayName || '',
+    email: profile.email,
+    role: profile.role || 'customer',
+    createdAt: profile.createdAt || new Date().toISOString(),
+    phoneNumber: profile.phoneNumber || '',
+    photoURL: profile.photoURL || '',
+    shopId: profile.shopId || '',
+    status: profile.status || 'active',
+    updatedAt: new Date().toISOString()
+  };
+  console.log(`[Firestore] Writing document to '${USERS_COLLECTION}/${profile.uid}':`, userData);
   try {
-    const userDocRef = doc(db, USERS_COLLECTION, profile.uid);
-    // User requested document structure: uid, name, email, role, createdAt + profile details
-    const userData = {
-      uid: profile.uid,
-      name: profile.displayName || '',
-      displayName: profile.displayName || '',
-      email: profile.email,
-      role: profile.role || 'customer',
-      createdAt: profile.createdAt || new Date().toISOString(),
-      phoneNumber: profile.phoneNumber || '',
-      photoURL: profile.photoURL || '',
-      shopId: profile.shopId || '',
-      status: profile.status || 'active',
-      updatedAt: new Date().toISOString()
-    };
     await setDoc(userDocRef, userData, { merge: true });
-  } catch (error) {
-    console.error('Error setting user profile in Firestore:', error);
+    console.log(`[Firestore Success] Document created/updated in '${USERS_COLLECTION}/${profile.uid}'`);
+  } catch (error: any) {
+    console.error(`[Firestore Error] Failed to write document in '${USERS_COLLECTION}/${profile.uid}':`, error);
     throw error;
   }
 }
@@ -63,8 +65,7 @@ export async function updateUserProfile(uid: string, updates: Partial<UserProfil
     }
     await updateDoc(userDocRef, updateData);
   } catch (error) {
-    console.error('Error updating user profile in Firestore:', error);
-    throw error;
+    console.warn('Error updating user profile in Firestore:', error);
   }
 }
 
@@ -75,6 +76,21 @@ export async function getAllUsersFromFirestore(): Promise<UserProfile[]> {
   } catch (error) {
     console.error('Error fetching all users from Firestore:', error);
     return [];
+  }
+}
+
+export async function deleteAllNonOwnerUsersFromFirestore(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, USERS_COLLECTION));
+    for (const d of snap.docs) {
+      const data = d.data() as UserProfile;
+      const cleanEmail = (data.email || '').toLowerCase().trim();
+      if (cleanEmail !== 'brhmyrwhy39@gmail.com' && data.role !== 'admin') {
+        await deleteDoc(doc(db, USERS_COLLECTION, d.id));
+      }
+    }
+  } catch (error) {
+    console.warn('Error purging non-owner users from Firestore:', error);
   }
 }
 
@@ -96,8 +112,103 @@ export async function setShopInFirestore(shop: Shop): Promise<void> {
     const ref = doc(db, SHOPS_COLLECTION, shop.id);
     await setDoc(ref, shop, { merge: true });
   } catch (error) {
-    console.error('Error saving shop to Firestore:', error);
-    throw error;
+    console.warn('Error saving shop to Firestore:', error);
+  }
+}
+
+export async function deleteShopFromFirestore(shopId: string): Promise<void> {
+  try {
+    const ref = doc(db, SHOPS_COLLECTION, shopId);
+    await deleteDoc(ref);
+    console.log(`[Firestore Success] Deleted shop '${shopId}' from Firestore`);
+  } catch (error) {
+    console.warn('Error deleting shop from Firestore:', error);
+  }
+}
+
+export async function deleteAllShopsFromFirestore(): Promise<void> {
+  try {
+    const snap = await getDocs(collection(db, SHOPS_COLLECTION));
+    const deletePromises = snap.docs.map((d) => deleteDoc(d.ref));
+    await Promise.all(deletePromises);
+    console.log(`[Firestore Success] Deleted all ${snap.docs.length} shops from Firestore`);
+  } catch (error) {
+    console.warn('Error deleting all shops from Firestore:', error);
+  }
+}
+
+// SHOP REQUESTS COLLECTION: shopRequests/{requestId}
+export const SHOP_REQUESTS_COLLECTION = 'shopRequests';
+
+export async function getAllShopRequestsFromFirestore(): Promise<ShopRequest[]> {
+  try {
+    const snap = await getDocs(collection(db, SHOP_REQUESTS_COLLECTION));
+    return snap.docs.map(d => d.data() as ShopRequest);
+  } catch (error) {
+    console.error('Error fetching shop requests from Firestore:', error);
+    return [];
+  }
+}
+
+export async function setShopRequestInFirestore(req: ShopRequest): Promise<void> {
+  try {
+    const ref = doc(db, SHOP_REQUESTS_COLLECTION, req.id);
+    await setDoc(ref, req, { merge: true });
+    console.log(`[Firestore Success] Created/Updated shopRequest '${req.id}' in Firestore`);
+  } catch (error) {
+    console.error('Error saving shop request to Firestore:', error);
+  }
+}
+
+export async function updateShopRequestInFirestore(id: string, updates: Partial<ShopRequest>): Promise<void> {
+  try {
+    const ref = doc(db, SHOP_REQUESTS_COLLECTION, id);
+    await updateDoc(ref, { ...updates, updatedAt: new Date().toISOString() });
+    console.log(`[Firestore Success] Updated shopRequest '${id}' in Firestore`);
+  } catch (error) {
+    console.warn('Error updating shop request in Firestore:', error);
+  }
+}
+
+export function subscribeToShopRequestsFromFirestore(callback: (requests: ShopRequest[]) => void) {
+  try {
+    return onSnapshot(collection(db, SHOP_REQUESTS_COLLECTION), (snap) => {
+      const list = snap.docs.map((d) => d.data() as ShopRequest);
+      callback(list);
+    }, (error) => {
+      console.warn('Firestore shopRequests subscription error:', error);
+    });
+  } catch (err) {
+    console.warn('Error setting up shopRequests listener:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToShopsFromFirestore(callback: (shops: Shop[]) => void) {
+  try {
+    return onSnapshot(collection(db, SHOPS_COLLECTION), (snap) => {
+      const list = snap.docs.map((d) => d.data() as Shop);
+      callback(list);
+    }, (error) => {
+      console.warn('Firestore shops subscription error:', error);
+    });
+  } catch (err) {
+    console.warn('Error setting up shops listener:', err);
+    return () => {};
+  }
+}
+
+export function subscribeToUsersFromFirestore(callback: (users: UserProfile[]) => void) {
+  try {
+    return onSnapshot(collection(db, USERS_COLLECTION), (snap) => {
+      const list = snap.docs.map((d) => d.data() as UserProfile);
+      callback(list);
+    }, (error) => {
+      console.warn('Firestore users subscription error:', error);
+    });
+  } catch (err) {
+    console.warn('Error setting up users listener:', err);
+    return () => {};
   }
 }
 

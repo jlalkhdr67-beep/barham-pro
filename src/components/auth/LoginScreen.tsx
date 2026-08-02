@@ -15,7 +15,8 @@ import {
   Wrench,
   ChevronLeft,
   Camera,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Crown
 } from 'lucide-react';
 import { useAuth, MockConfirmationResult } from '../../context/AuthContext';
 import { UserRole } from '../../types';
@@ -46,6 +47,7 @@ export const LoginScreen: React.FC = () => {
   const [ownerName, setOwnerName] = useState('');
   const [shopName, setShopName] = useState('');
   const [city, setCity] = useState('بغداد');
+  const [category, setCategory] = useState('هواتف');
   const [address, setAddress] = useState('شارع الصناعة - مقابل الجامعة التكنولوجية');
   const [description, setDescription] = useState('مركز صيانة وتوريد قطع غيار أصلية لجميع الهواتف والأجهزة الذكية.');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&q=80');
@@ -122,13 +124,14 @@ export const LoginScreen: React.FC = () => {
         } else if (registerType === 'owner') {
           await registerShopOwner({
             ownerName: ownerName || 'صاحب المحل',
-            shopName: shopName || 'مركز صيانة برهام',
+            shopName: shopName || 'مركز صيانة برهم',
             email,
             phone: phoneNumber || '07701234567',
             pass: password,
             city,
             address,
             description,
+            category,
             coverUrl,
             logoUrl,
           });
@@ -447,7 +450,7 @@ export const LoginScreen: React.FC = () => {
                       required
                       value={ownerName}
                       onChange={(e) => setOwnerName(e.target.value)}
-                      placeholder="م. برهام الجبوري"
+                      placeholder="م. برهم الجبوري"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white focus:outline-none focus:border-purple-500"
                     />
                   </div>
@@ -459,7 +462,7 @@ export const LoginScreen: React.FC = () => {
                       required
                       value={shopName}
                       onChange={(e) => setShopName(e.target.value)}
-                      placeholder="مركز برهام للصيانة"
+                      placeholder="مركز برهم للصيانة"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white focus:outline-none focus:border-purple-500"
                     />
                   </div>
@@ -504,6 +507,21 @@ export const LoginScreen: React.FC = () => {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1 font-bold">التصنيف الرئيسي للمحل</label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white focus:outline-none"
+                    >
+                      <option value="هواتف">هواتف (بيع وصيانة)</option>
+                      <option value="صيانة وحلول الهواتف الذكية">صيانة وحلول الهواتف الذكية</option>
+                      <option value="صيانة أبل وأندرويد">صيانة أبل وأندرويد</option>
+                      <option value="إلكترونيات واكسسوارات">إلكترونيات واكسسوارات</option>
+                      <option value="قطع غيار ومستلزمات">قطع غيار ومستلزمات</option>
+                    </select>
+                  </div>
+
                   <div>
                     <label className="block text-xs text-slate-300 mb-1 font-bold">المدينة</label>
                     <select

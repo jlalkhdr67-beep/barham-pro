@@ -172,21 +172,15 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
     if (!shop) return;
     setLoading(true);
     try {
-      let fetchedProds = MockDataService.getProductsByShop(shop.id);
-      if (fetchedProds.length === 0) {
-        fetchedProds = getInitialProductsForShop(shop);
-      }
+      const fetchedProds = MockDataService.getProductsByShop(shop.id);
       setProducts(fetchedProds);
 
-      let fetchedRevs = MockDataService.getReviews().filter((r) => r.shopId === shop.id);
-      if (fetchedRevs.length === 0) {
-        fetchedRevs = getInitialReviewsForShop(shop.id);
-      }
+      const fetchedRevs = MockDataService.getReviews().filter((r) => r.shopId === shop.id);
       setReviews(fetchedRevs);
     } catch (err) {
       console.error('Error loading shop details:', err);
-      setProducts(getInitialProductsForShop(shop));
-      setReviews(getInitialReviewsForShop(shop.id));
+      setProducts([]);
+      setReviews([]);
     } finally {
       setLoading(false);
     }
@@ -336,30 +330,31 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
       const newTicket: MaintenanceTicket = {
         id: `ticket_${Date.now()}`,
         ticketNumber: ticketNum,
-        customerId: 'customer_demo_1',
-        customerName: 'أحمد علي العراقي',
-        customerPhone: '07712345678',
+        customerId: userProfile?.uid || 'customer_demo_1',
+        customerName: userProfile?.displayName || 'أحمد علي العراقي',
+        customerPhone: userProfile?.phoneNumber || '07712345678',
         shopId: currentShop.id,
         shopName: currentShop.name,
         deviceType: `${mDeviceType} - ${mDeviceName}`,
         issueDescription: mIssueDesc,
-        status: 'received',
-        progressPercent: 10,
-        estimatedCostIQD: 45000,
+        status: 'pending_owner_approval',
+        progressPercent: 0,
+        estimatedCostIQD: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         stages: [
-          { status: 'received', title: 'تم استلام طلب الصيانة', date: 'الآن', completed: true },
-          { status: 'inspecting', title: 'جاري الفحص التشخيصي', date: '-', completed: false },
-          { status: 'awaiting_approval', title: 'بانتظار موافقة العميل', date: '-', completed: false },
+          { status: 'pending_owner_approval', title: 'تم إرسال الطلب - بانتظار موافقة المالك', date: 'الآن', completed: true },
+          { status: 'received', title: 'موافقة صاحب المحل واستلام الجهاز', date: '-', completed: false },
+          { status: 'inspecting', title: 'قيد الفحص وتحديد الخدمات والتكلفة', date: '-', completed: false },
           { status: 'repairing', title: 'قيد الصيانة والتركيب', date: '-', completed: false },
           { status: 'ready', title: 'جاهز للتسليم', date: '-', completed: false },
+          { status: 'delivered', title: 'تم التسليم النهائي', date: '-', completed: false },
         ],
       };
 
       MockDataService.addTicket(newTicket);
       setMSuccessTicket(ticketNum);
-      showToast(`تم إرسال طلب الصيانة بنجاح برقم: ${ticketNum}`);
+      showToast(`تم إرسال الطلب بنجاح برقم: ${ticketNum} (بانتظار موافقة المالك)`);
       setTimeout(() => {
         setShowMaintenanceModal(false);
         setMSuccessTicket('');
@@ -468,7 +463,7 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
                     <div className="flex items-center gap-3 text-xs text-slate-300">
                       <span className="flex items-center gap-1 text-amber-400 font-bold">
                         <Star className="w-4 h-4 fill-amber-400" />
-                        {shop.rating || 4.9} ({shop.reviewsCount || 128} تقييم)
+                        {shop.rating ? shop.rating.toFixed(1) : '0.0'} ({shop.reviewsCount || 0} تقييم)
                       </span>
                       <span>•</span>
                       <span className="flex items-center gap-1 text-slate-300">
@@ -1399,91 +1394,11 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
   );
 };
 
-// Initial Seed Data Helpers
-function getInitialProductsForShop(shop: Shop): Product[] {
-  return [
-    {
-      id: `prod_seed_1_${shop.id}`,
-      shopId: shop.id,
-      shopName: shop.name,
-      name: 'شاشة أيفون 15 بروماكس أصلية OLED مع ضمان سنة',
-      description: 'شاشة أصلية مفكوكة من جهاز جديد مع شريحة الألوان الأصلية ودعم TrueTone وضمان عدم ظهور رسالة الشاشة المستبدلة.',
-      priceIQD: 245000,
-      compareAtPriceIQD: 280000,
-      quantity: 8,
-      category: 'شاشات',
-      images: ['https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&q=80'],
-      barcode: 'BRH-982109',
-      qrCode: 'BRH-982109',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: `prod_seed_2_${shop.id}`,
-      shopId: shop.id,
-      shopName: shop.name,
-      name: 'بطارية سامسونج S24 Ultra أصلية مع شريحة الحماية',
-      description: 'بطارية أصلية بسعة 5000 مللي أمبير تدعم الشحن السريع 45W ومرفقة مع لاصق الحماية الأصلي ضد الحرارة.',
-      priceIQD: 65000,
-      compareAtPriceIQD: 75000,
-      quantity: 12,
-      category: 'بطاريات',
-      images: ['https://images.unsplash.com/photo-1619725002198-6a689b72f41d?w=600&q=80'],
-      barcode: 'BRH-441209',
-      qrCode: 'BRH-441209',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: `prod_seed_3_${shop.id}`,
-      shopId: shop.id,
-      shopName: shop.name,
-      name: 'شاحن انكر سريع GaN 65W بثلاثة منافس ذكية',
-      description: 'شاحن سريع أصلي معتمد لأجهزة الآيفون والسامسونج واللابتوبات مع ضمان سنتين من الوكيل المعتمد.',
-      priceIQD: 48000,
-      quantity: 15,
-      category: 'شواحن',
-      images: ['https://images.unsplash.com/photo-1583863788434-e58a36330cf0?w=600&q=80'],
-      barcode: 'BRH-109283',
-      qrCode: 'BRH-109283',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: `prod_seed_4_${shop.id}`,
-      shopId: shop.id,
-      shopName: shop.name,
-      name: 'كفر حماية شفاف مقاوم للصدمات مع حلقة MagSafe',
-      description: 'حماية فائقة مع حلقة مغناطيسية قوية للشحن اللاسلكي السريع ومقاومة لليزر والأصفرار.',
-      priceIQD: 25000,
-      quantity: 20,
-      category: 'إكسسوارات',
-      images: ['https://images.unsplash.com/photo-1601784551446-20c9e07cdbdb?w=600&q=80'],
-      barcode: 'BRH-771203',
-      qrCode: 'BRH-771203',
-      createdAt: new Date().toISOString(),
-    }
-  ];
+// Initial Data Helpers (returns empty for new shops)
+function getInitialProductsForShop(_shop: Shop): Product[] {
+  return [];
 }
 
-function getInitialReviewsForShop(shopId: string): ShopReview[] {
-  return [
-    {
-      id: 'rev_1',
-      shopId,
-      userId: 'u1',
-      userName: 'علي جاسم العبيدي',
-      userPhoto: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&q=80',
-      rating: 5,
-      comment: 'صيانة ممتازة جداً واستبدلوا شاشة أيفوني خلال نص ساعة فقط مع ضمان حقيقي. أنصح بالتعامل معهم!',
-      createdAt: '2026-03-20T10:00:00Z',
-    },
-    {
-      id: 'rev_2',
-      shopId,
-      userId: 'u2',
-      userName: 'مريم حسن البغدادي',
-      userPhoto: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&q=80',
-      rating: 5,
-      comment: 'القطع أصلية والأهم الفاتورة إلكترونية واضحة مع باركود تتبع الضمان. مركز محترف حقاً.',
-      createdAt: '2026-03-18T14:30:00Z',
-    },
-  ];
+function getInitialReviewsForShop(_shopId: string): ShopReview[] {
+  return [];
 }

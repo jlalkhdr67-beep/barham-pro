@@ -27,7 +27,8 @@ import {
   Upload,
   Check,
   Sparkles,
-  Tag
+  Tag,
+  RefreshCw
 } from 'lucide-react';
 import { MockDataService } from '../../services/MockDataService';
 import { useAuth } from '../../context/AuthContext';
@@ -100,6 +101,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const [ticketProgress, setTicketProgress] = useState<number>(50);
   const [ticketCost, setTicketCost] = useState<number>(0);
   const [technicianNote, setTechnicianNote] = useState('');
+  const [ticketSelectedServices, setTicketSelectedServices] = useState<string[]>([]);
+  const [customServiceInput, setCustomServiceInput] = useState<string>('');
 
   // Invoice Modal State
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -145,7 +148,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     setLoading(true);
     try {
       const shops = MockDataService.getShops();
-      const targetShop = shops.find((s) => s.ownerId === userProfile?.uid || s.id === userProfile?.shopId) || shops[0];
+      const targetShop = shops.find((s) => s.ownerId === userProfile?.uid || s.id === userProfile?.shopId) || null;
       if (targetShop) {
         setCurrentShop(targetShop);
         setMandatoryShopName(targetShop.name || '');
@@ -169,8 +172,32 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     }
   };
 
-  // Total Sales Sum
-  const totalSalesIQD = invoices.reduce((sum, inv) => sum + inv.totalIQD, 0);
+  // Shop-specific filtered data & metrics
+  const shopProducts = useMemo(() => {
+    if (!currentShop) return [];
+    return products.filter((p) => p.shopId === currentShop.id);
+  }, [products, currentShop]);
+
+  const shopTickets = useMemo(() => {
+    if (!currentShop) return [];
+    return tickets.filter((t) => t.shopId === currentShop.id);
+  }, [tickets, currentShop]);
+
+  const shopInvoices = useMemo(() => {
+    if (!currentShop) return [];
+    return invoices.filter((i) => i.shopId === currentShop.id);
+  }, [invoices, currentShop]);
+
+  const totalSalesIQD = useMemo(() => {
+    return shopInvoices.reduce((sum, inv) => sum + inv.totalIQD, 0);
+  }, [shopInvoices]);
+
+  const shopCustomersCount = useMemo(() => {
+    const custIds = new Set<string>();
+    shopTickets.forEach((t) => { if (t.customerId) custIds.add(t.customerId); });
+    shopInvoices.forEach((i) => { if (i.customerId) custIds.add(i.customerId); });
+    return custIds.size;
+  }, [shopTickets, shopInvoices]);
 
   // Save / Update Product
   const handleSaveProduct = async (e: React.FormEvent) => {
@@ -193,7 +220,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       const newProd: Product = {
         id: `prod_${Date.now()}`,
         shopId: userProfile?.shopId || 'shop_barham_main',
-        shopName: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهام برو للصيانة والبرمجيات',
+        shopName: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهم برو للصيانة والبرمجيات',
         name: prodName,
         description: 'منتج أو قطعة غيار معتمدة بالضمان الأصلي من المركز.',
         priceIQD: Number(prodPrice),
@@ -230,17 +257,70 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     });
   };
 
-  // Update Maintenance Status
+  // Accept ticket request by owner first, then allow filling services and cost
+  const handleAcceptTicketRequest = (ticket: MaintenanceTicket) => {
+    const updatedStages = ticket.stages.map((stg) => {
+      if (stg.status === 'pending_owner_approval' || stg.status === 'received') {
+        return { ...stg, completed: true, date: 'الآن' };
+      }
+      return stg;
+    });
+
+    MockDataService.updateTicket(ticket.id, {
+      status: 'inspecting',
+      updatedAt: new Date().toISOString(),
+      stages: updatedStages,
+    });
+    setTickets(MockDataService.getTickets());
+
+    // Open modal immediately so owner can select services, set cost & notes
+    setSelectedTicket({ ...ticket, status: 'inspecting' });
+    setTicketStatus('inspecting');
+    setTicketProgress(30);
+    setTicketCost(ticket.estimatedCostIQD || 25000);
+    setTechnicianNote(ticket.technicianNote || 'تم قبول الطلب بوسطة صاحب المحل. جاري فحص الجهاز وتحديد الخدمات والتكلفة.');
+    setTicketSelectedServices(ticket.selectedServices || (currentShop?.services ? [currentShop.services[0]] : []));
+    setShowTicketModal(true);
+  };
+
+  const handleRejectTicketRequest = (ticket: MaintenanceTicket) => {
+    const updatedStages = ticket.stages.map((stg) => {
+      if (stg.status === 'pending_owner_approval') {
+        return { ...stg, title: 'تم رفض الطلب من قبل صاحب المحل', completed: true, date: 'الآن' };
+      }
+      return stg;
+    });
+
+    MockDataService.updateTicket(ticket.id, {
+      status: 'rejected',
+      rejectionReason: 'اعتذار عن قبول الطلب لعدم توفر القطع الأصلية أو إمكانية الصيانة حالياً.',
+      updatedAt: new Date().toISOString(),
+      stages: updatedStages,
+    });
+    setTickets(MockDataService.getTickets());
+  };
+
+  // Update Maintenance Status and Services
   const handleUpdateTicketStatus = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedTicket) return;
 
+    const updatedStages = selectedTicket.stages.map((stg) => {
+      if (stg.status === ticketStatus) {
+        return { ...stg, completed: true, date: 'الآن' };
+      }
+      return stg;
+    });
+
     const updatedTicket: Partial<MaintenanceTicket> = {
       status: ticketStatus,
       progressPercent: Number(ticketProgress),
+      estimatedCostIQD: Number(ticketCost),
       finalCostIQD: Number(ticketCost),
       technicianNote,
+      selectedServices: ticketSelectedServices,
       updatedAt: new Date().toISOString(),
+      stages: updatedStages,
     };
 
     MockDataService.updateTicket(selectedTicket.id, updatedTicket);
@@ -259,7 +339,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       id: `inv_${Date.now()}`,
       invoiceNumber: newInvNum,
       shopId: userProfile?.shopId || 'shop_barham_main',
-      shopName: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهام برو للصيانة والبرمجيات',
+      shopName: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهم برو للصيانة والبرمجيات',
       shopAddress: 'بغداد - شارع الصناعة - مقابل الجامعة التكنولوجية',
       shopPhone: '07700001122',
       customerId: 'cust_gen',
@@ -278,7 +358,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       taxIQD: 0,
       discountIQD: 0,
       totalIQD: total,
-      paymentMethod: 'zain_cash',
+      paymentMethod: 'cash',
       status: 'paid',
       notes: invNotes || 'شكرًا لتعاملكم معنا. الضمان يسري لمدة 60 يوماً.',
       createdAt: new Date().toISOString(),
@@ -322,7 +402,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const handleSaveOffer = async (e: React.FormEvent) => {
     e.preventDefault();
     const shopId = userProfile?.shopId || 'shop_barham_main';
-    const shopName = userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهام برو للصيانة والبرمجيات';
+    const shopName = userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهم برو للصيانة والبرمجيات';
 
     if (editingOfferId) {
       MockDataService.updateOffer(editingOfferId, {
@@ -418,13 +498,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     }
   };
 
-  // Check if mandatory setup is required (when shop is approved but details or services are incomplete)
-  const isSetupMandatory = currentShop && userProfile?.status !== 'pending' && (
-    currentShop.isDetailsCompleted === false ||
-    !currentShop.services ||
-    currentShop.services.length === 0 ||
-    !currentShop.description
-  );
+  // Mandatory setup form removed per user request
+  const isSetupMandatory = false;
 
   const handleAddMandatoryService = () => {
     if (!newServiceInput.trim()) return;
@@ -472,26 +547,73 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     setMandatoryFormError('');
   };
 
-  if (userProfile?.status === 'pending') {
+  const checkApprovalStatus = async () => {
+    if (!userProfile) return;
+    const mockUser = MockDataService.getUserById(userProfile.uid);
+    const shops = MockDataService.getShops();
+    const requests = MockDataService.getShopRequests();
+
+    const targetShop = shops.find((s) => s.ownerId === userProfile.uid || (userProfile.shopId && s.id === userProfile.shopId));
+    const targetReq = requests.find((r) => r.ownerId === userProfile.uid || (r.email && r.email.toLowerCase() === userProfile.email.toLowerCase()));
+
+    // Approved ONLY if Admin explicitly marked shop or request as approved
+    const isApprovedByAdmin = (targetShop && targetShop.status === 'approved') || (targetReq && targetReq.status === 'approved');
+
+    if (isApprovedByAdmin) {
+      const activeShopId = targetShop?.id || userProfile.shopId || (targetReq ? `shop_${targetReq.id}` : `shop_${Date.now()}`);
+      await updateUserProfile({
+        status: 'active',
+        shopId: activeShopId,
+        role: 'owner'
+      });
+      fetchData();
+    }
+  };
+
+  const isAccountPending =
+    userProfile?.role === 'owner' && (
+      userProfile?.status === 'pending' ||
+      userProfile?.status === 'suspended' ||
+      (currentShop && currentShop.status === 'pending')
+    );
+
+  useEffect(() => {
+    if (isAccountPending) {
+      checkApprovalStatus();
+      const interval = setInterval(() => {
+        checkApprovalStatus();
+      }, 2500);
+      return () => clearInterval(interval);
+    }
+  }, [isAccountPending, userProfile?.uid]);
+
+  if (isAccountPending) {
     return (
       <div className="max-w-2xl mx-auto my-12 bg-slate-900 border border-amber-500/30 rounded-3xl p-8 sm:p-10 text-center space-y-6 shadow-2xl animate-in fade-in zoom-in-95" dir="rtl">
         <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400 shadow-xl shadow-amber-500/10">
           <Clock className="w-10 h-10 animate-pulse" />
         </div>
         <div className="space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-black text-white">تم تقديم الطلب! انتظر موافقة المالك ⏳</h2>
+          <h2 className="text-2xl sm:text-3xl font-black text-white">الحساب معلق ⏳ بانتظار موافقة المالك</h2>
           <p className="text-sm text-slate-300 leading-relaxed max-w-lg mx-auto">
-            تم تسجيل طلب انضمام محلك بنجاح. طلبك حالياً بانتظار موافقة ومراجعة مالك النظام (Admin) لتفعيل الحساب بالكامل والبدء بإدارة المحل.
+            تم تسجيل حساب المحل بنجاح. حسابك معلق حالياً ولا يمكنك إجراء أي عمليات أو إضافة منتجات أو فواتير حتى يتم قبول طلبك وموافقته رسمياً من قبل مالك المنصة الرئيسي (Super Admin).
           </p>
         </div>
         <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-xs text-amber-300 font-bold flex items-center justify-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
-          <span>حالة الطلب: قيد الانتظار والمراجعة من الإدارة</span>
+          <span>حالة الحساب: معلق (قيد الانتظار والمراجعة من الإدارة)</span>
         </div>
-        <div className="pt-2 flex justify-center">
+        <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
+          <button
+            onClick={() => checkApprovalStatus()}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4 animate-spin" />
+            <span>التحقق من موافقة المالك الآن</span>
+          </button>
           <button
             onClick={() => logout()}
-            className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 px-8 rounded-2xl transition-all shadow-lg flex items-center gap-2"
+            className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2"
           >
             <LogOut className="w-4 h-4" />
             <span>تسجيل الخروج والعودة لاحقاً</span>
@@ -544,7 +666,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
                       required
                       value={mandatoryShopName}
                       onChange={(e) => setMandatoryShopName(e.target.value)}
-                      placeholder="مثال: مركز برهام للصيانة المتقدمة"
+                      placeholder="مثال: مركز برهم للصيانة المتقدمة"
                       className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-amber-500"
                     />
                   </div>
@@ -799,23 +921,23 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
           {onPreviewStore && (
             <button
               onClick={() => {
-                const myShop: Shop = {
-                  id: userProfile?.shopId || 'shop_barham_main',
-                  name: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهام برو للصيانة والبرمجيات',
-                  slug: 'barham-pro-shop',
-                  ownerId: userProfile?.uid || 'owner_1',
-                  rating: 4.9,
-                  reviewsCount: 128,
+                const myShop: Shop = currentShop || {
+                  id: userProfile?.shopId || `shop_${userProfile?.uid}`,
+                  name: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز صيانة وتجارة هواتف',
+                  slug: 'shop',
+                  ownerId: userProfile?.uid || '',
+                  rating: 0,
+                  reviewsCount: 0,
                   city: 'بغداد',
-                  address: 'شارع الصناعة - مقابل الجامعة التكنولوجية',
-                  description: 'مركز متخصص وبيع أحدث أجهزة الهواتف الذكية والصيانة الاحترافية الموثوقة مع ضمان معتمد.',
+                  address: 'العنوان الرئيسي',
+                  description: 'مركز محلي معتمد لبيع وصيانة الهواتف والقطع الأصلية',
                   coverImage: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&q=80',
                   logo: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&q=80',
                   status: 'approved',
                   distanceKm: 0.8,
                   workingHours: '9:00 ص - 10:00 م',
-                  category: 'صيانة وتجارة هواتف',
-                  phone: '07700001122',
+                  category: 'هواتف',
+                  phone: userProfile?.phoneNumber || '07700001122',
                   createdAt: new Date().toISOString(),
                   branches: [],
                 };
@@ -851,31 +973,31 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-400 font-medium mb-1">إجمالي المنتجات</div>
-          <div className="text-2xl font-black text-white">{products.length}</div>
+          <div className="text-2xl font-black text-white">{shopProducts.length}</div>
           <span className="text-[10px] text-blue-400 mt-1 block">في المخزون الفعلي</span>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-400 font-medium mb-1">إجمالي المبيعات</div>
           <div className="text-2xl font-black text-emerald-400">{formatIQD(totalSalesIQD)}</div>
-          <span className="text-[10px] text-emerald-500 mt-1 block">+12% مقارنة بالشهر السابق</span>
+          <span className="text-[10px] text-emerald-500 mt-1 block">من فواتير المحل المعتمدة</span>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-400 font-medium mb-1">طلبات الصيانة</div>
-          <div className="text-2xl font-black text-blue-400">{tickets.length}</div>
-          <span className="text-[10px] text-slate-400 mt-1 block">تذكرة صيانة مفتوحة</span>
+          <div className="text-2xl font-black text-blue-400">{shopTickets.length}</div>
+          <span className="text-[10px] text-slate-400 mt-1 block">تذكرة صيانة للمحل</span>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4">
           <div className="text-xs text-slate-400 font-medium mb-1">عدد العملاء</div>
-          <div className="text-2xl font-black text-purple-400">142</div>
-          <span className="text-[10px] text-purple-400 mt-1 block">زبون مسجل</span>
+          <div className="text-2xl font-black text-purple-400">{shopCustomersCount}</div>
+          <span className="text-[10px] text-purple-400 mt-1 block">زبون مسجل للمحل</span>
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 col-span-2 lg:col-span-1">
           <div className="text-xs text-slate-400 font-medium mb-1">الفواتير المصدرة</div>
-          <div className="text-2xl font-black text-amber-400">{invoices.length}</div>
+          <div className="text-2xl font-black text-amber-400">{shopInvoices.length}</div>
           <span className="text-[10px] text-amber-500 mt-1 block">فاتورة PDF معتمدة</span>
         </div>
       </div>
@@ -997,53 +1119,128 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       {/* SUBTAB 2: MAINTENANCE TICKETS STATUS MANAGER */}
       {activeSubTab === 'maintenance' && (
         <div className="space-y-4">
-          <h3 className="text-lg font-black text-white">إدارة تحديث طلبات الصيانة والمراحل</h3>
+          <div className="flex justify-between items-center">
+            <h3 className="text-lg font-black text-white">إدارة طلبات الصيانة والموافقة عليها</h3>
+            <span className="text-xs text-amber-400 font-bold bg-amber-500/10 border border-amber-500/20 px-3 py-1 rounded-full">
+              عدد الطلبات بانتظار موافقة المالك: {tickets.filter(t => t.status === 'pending_owner_approval').length}
+            </span>
+          </div>
 
           <div className="space-y-3">
-            {tickets.map((t) => (
-              <div key={t.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 flex flex-wrap justify-between items-center gap-4">
-                <div className="flex items-start gap-4">
-                  {t.deviceImage && (
-                    <img
-                      src={t.deviceImage}
-                      alt={t.deviceType}
-                      className="w-16 h-16 rounded-xl object-cover border border-slate-700 bg-slate-950 flex-shrink-0"
-                    />
-                  )}
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="bg-blue-500/20 text-blue-300 font-bold px-2.5 py-0.5 rounded-full text-xs">
-                        #{t.ticketNumber}
-                      </span>
-                      <span className="text-xs text-slate-400">الزبون: {t.customerName} ({t.customerPhone})</span>
+            {tickets.map((t) => {
+              const isPendingApproval = t.status === 'pending_owner_approval';
+              const isRejected = t.status === 'rejected';
+
+              return (
+                <div
+                  key={t.id}
+                  className={`bg-slate-900 border rounded-2xl p-5 flex flex-wrap justify-between items-center gap-4 transition-all ${
+                    isPendingApproval
+                      ? 'border-amber-500/60 bg-gradient-to-r from-amber-950/20 via-slate-900 to-slate-900 shadow-xl shadow-amber-500/5'
+                      : isRejected
+                      ? 'border-red-500/30 opacity-75'
+                      : 'border-slate-800'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    {t.deviceImage && (
+                      <img
+                        src={t.deviceImage}
+                        alt={t.deviceType}
+                        className="w-16 h-16 rounded-xl object-cover border border-slate-700 bg-slate-950 flex-shrink-0"
+                      />
+                    )}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="bg-blue-500/20 text-blue-300 font-bold px-2.5 py-0.5 rounded-full text-xs">
+                          #{t.ticketNumber}
+                        </span>
+                        {isPendingApproval ? (
+                          <span className="bg-amber-500/20 text-amber-400 border border-amber-500/40 text-[11px] font-bold px-3 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
+                            <span>⚡ طلب جديد بانتظار موافقتك كمالك للمحل</span>
+                          </span>
+                        ) : isRejected ? (
+                          <span className="bg-red-500/20 text-red-400 border border-red-500/40 text-[11px] font-bold px-3 py-0.5 rounded-full">
+                            🛑 تم رفض الطلب
+                          </span>
+                        ) : (
+                          <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[11px] font-bold px-3 py-0.5 rounded-full">
+                            ✅ تمت الموافقة - جاري التنفيذ
+                          </span>
+                        )}
+                        <span className="text-xs text-slate-400">الزبون: {t.customerName} ({t.customerPhone})</span>
+                      </div>
+
+                      <h4 className="text-base font-bold text-white">{t.deviceType}</h4>
+                      <p className="text-xs text-slate-300">وصف المشكلة: {t.issueDescription}</p>
+
+                      {/* Render Selected Services if filled */}
+                      {t.selectedServices && t.selectedServices.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[11px] text-amber-300 font-bold">الخدمات المعتمدة:</span>
+                          {t.selectedServices.map((srv, idx) => (
+                            <span key={idx} className="bg-slate-800 text-slate-200 border border-slate-700 text-[10px] px-2 py-0.5 rounded-lg">
+                              {srv}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {t.estimatedCostIQD > 0 && (
+                        <div className="text-xs font-bold text-emerald-400">
+                          التكلفة المحددة: {formatIQD(t.estimatedCostIQD)}
+                        </div>
+                      )}
                     </div>
-                    <h4 className="text-base font-bold text-white">{t.deviceType}</h4>
-                    <p className="text-xs text-slate-400">{t.issueDescription}</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <div className="text-xs text-slate-400">نسبة التقدم</div>
-                    <div className="text-sm font-bold text-cyan-400">{t.progressPercent}%</div>
                   </div>
 
-                  <button
-                    onClick={() => {
-                      setSelectedTicket(t);
-                      setTicketStatus(t.status);
-                      setTicketProgress(t.progressPercent);
-                      setTicketCost(t.estimatedCostIQD);
-                      setTechnicianNote(t.technicianNote || '');
-                      setShowTicketModal(true);
-                    }}
-                    className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/20"
-                  >
-                    تحديث الحالة والتكلفة
-                  </button>
+                  <div className="flex items-center gap-3">
+                    {isPendingApproval ? (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleAcceptTicketRequest(t)}
+                          className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-emerald-600/20 flex items-center gap-1.5"
+                        >
+                          <Check className="w-4 h-4" />
+                          <span>قبول الطلب وتحديد الخدمات</span>
+                        </button>
+                        <button
+                          onClick={() => handleRejectTicketRequest(t)}
+                          className="bg-slate-800 hover:bg-red-900/40 text-red-400 border border-red-500/40 font-bold text-xs px-3 py-2.5 rounded-xl transition-all"
+                        >
+                          رفض
+                        </button>
+                      </div>
+                    ) : isRejected ? (
+                      <span className="text-xs text-slate-500 font-bold">الطلب مرفوض</span>
+                    ) : (
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-xs text-slate-400">نسبة الإنجاز</div>
+                          <div className="text-sm font-bold text-cyan-400">{t.progressPercent}%</div>
+                        </div>
+
+                        <button
+                          onClick={() => {
+                            setSelectedTicket(t);
+                            setTicketStatus(t.status);
+                            setTicketProgress(t.progressPercent);
+                            setTicketCost(t.estimatedCostIQD || 0);
+                            setTechnicianNote(t.technicianNote || '');
+                            setTicketSelectedServices(t.selectedServices || []);
+                            setShowTicketModal(true);
+                          }}
+                          className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/20 flex items-center gap-1"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                          <span>تعديل الخدمات والتكلفة</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -1302,6 +1499,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
                   onChange={(e) => setProdCategory(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
                 >
+                  <option value="هاتف">هاتف</option>
+                  <option value="هواتف">هواتف وأجهزة ذكية</option>
                   <option value="قطع غيار شاشات">قطع غيار شاشات</option>
                   <option value="بطاريات أصلية">بطاريات أصلية</option>
                   <option value="شواحن ومحولات">شواحن ومحولات</option>
@@ -1350,64 +1549,136 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       {/* Ticket Status Edit Modal */}
       {showTicketModal && selectedTicket && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-6 relative text-slate-100">
-            <button onClick={() => setShowTicketModal(false)} className="absolute top-4 left-4 text-slate-400">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 relative text-slate-100 max-h-[90vh] overflow-y-auto">
+            <button onClick={() => setShowTicketModal(false)} className="absolute top-4 left-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-            <h4 className="text-lg font-black text-white mb-2">تحديث حالة تذكرة الصيانة #{selectedTicket.ticketNumber}</h4>
+            <h4 className="text-lg font-black text-white mb-1">
+              تحديث خدمات وتكلفة وحالة الطلب #{selectedTicket.ticketNumber}
+            </h4>
+            <p className="text-xs text-slate-400 mb-4">الزبون: {selectedTicket.customerName} ({selectedTicket.deviceType})</p>
 
             <form onSubmit={handleUpdateTicketStatus} className="space-y-4 text-xs">
+              {/* Service Selection */}
+              <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2">
+                <label className="block text-amber-300 font-bold">
+                  تحديد وتخصيص الخدمات المطلوبة لهذا الجهاز:
+                </label>
+                <p className="text-[11px] text-slate-400">اختر الخدمات المعالجة أو أضف خدمة مخصصة:</p>
+
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {(currentShop?.services || [
+                    'تبديل شاشة أصلية OLED',
+                    'تبديل بطارية أصلية 100%',
+                    'إصلاح أيسي الشحن ic',
+                    'صيانة السماعات والميكروفون',
+                    'فحص وتنظيف شامل للجهاز',
+                    'فورمات وبرمجة وسوفتوير'
+                  ]).map((serviceName, i) => {
+                    const isSelected = ticketSelectedServices.includes(serviceName);
+                    return (
+                      <button
+                        type="button"
+                        key={i}
+                        onClick={() => {
+                          if (isSelected) {
+                            setTicketSelectedServices(ticketSelectedServices.filter(s => s !== serviceName));
+                          } else {
+                            setTicketSelectedServices([...ticketSelectedServices, serviceName]);
+                          }
+                        }}
+                        className={`px-3 py-1.5 rounded-xl font-bold transition-all text-[11px] border ${
+                          isSelected
+                            ? 'bg-blue-600 text-white border-blue-400 shadow-md shadow-blue-600/30'
+                            : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                        }`}
+                      >
+                        {isSelected ? '✓ ' : '+ '} {serviceName}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Custom Service Input */}
+                <div className="flex gap-2 pt-2">
+                  <input
+                    type="text"
+                    value={customServiceInput}
+                    onChange={(e) => setCustomServiceInput(e.target.value)}
+                    placeholder="إضافة خدمة مخصصة أخرى..."
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-white text-xs"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (customServiceInput.trim() && !ticketSelectedServices.includes(customServiceInput.trim())) {
+                        setTicketSelectedServices([...ticketSelectedServices, customServiceInput.trim()]);
+                        setCustomServiceInput('');
+                      }
+                    }}
+                    className="bg-slate-800 hover:bg-slate-700 text-blue-400 px-3 py-1.5 rounded-xl font-bold"
+                  >
+                    إضافة
+                  </button>
+                </div>
+              </div>
+
               <div>
-                <label className="block text-slate-300 mb-1">حالة الصيانة الحالية</label>
+                <label className="block text-slate-300 mb-1">حالة الطلب والصيانة</label>
                 <select
                   value={ticketStatus}
                   onChange={(e) => setTicketStatus(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white font-bold"
                 >
-                  <option value="received">تم الاستلام</option>
-                  <option value="inspecting">قيد الفحص الشامل</option>
-                  <option value="awaiting_approval">بانتظار موافقة الزبون</option>
-                  <option value="repairing">قيد الإصلاح</option>
-                  <option value="ready">جاهز للتسليم</option>
-                  <option value="delivered">تم التسليم النهائي</option>
+                  <option value="pending_owner_approval">بانتظار موافقة صاحب المحل</option>
+                  <option value="received">تم القبول والاستلام</option>
+                  <option value="inspecting">قيد الفحص وتحديد الخدمات والتكلفة</option>
+                  <option value="awaiting_approval">بانتظار موافقة العميل على التكلفة</option>
+                  <option value="repairing">قيد الإصلاح والتركيب</option>
+                  <option value="ready">جاهز للتسليم النهائي</option>
+                  <option value="delivered">تم التسليم للزبون بنجاح</option>
+                  <option value="rejected">مرفوض من قِبل المالك</option>
                 </select>
               </div>
 
-              <div>
-                <label className="block text-slate-300 mb-1">نسبة الإنجاز % ({ticketProgress}%)</label>
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={ticketProgress}
-                  onChange={(e) => setTicketProgress(Number(e.target.value))}
-                  className="w-full"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 mb-1">التكلفة الكلية للخدمات (د.ع)</label>
+                  <input
+                    type="number"
+                    value={ticketCost}
+                    onChange={(e) => setTicketCost(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-emerald-400 font-bold"
+                    placeholder="مثال: 50000"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 mb-1">نسبة الإنجاز % ({ticketProgress}%)</label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={ticketProgress}
+                    onChange={(e) => setTicketProgress(Number(e.target.value))}
+                    className="w-full mt-3"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-slate-300 mb-1">التكلفة النهائية (د.ع)</label>
-                <input
-                  type="number"
-                  value={ticketCost}
-                  onChange={(e) => setTicketCost(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-slate-300 mb-1">ملاحظة الفني</label>
+                <label className="block text-slate-300 mb-1">ملاحظات الفني وصاحب المحل للزبون</label>
                 <textarea
                   rows={2}
                   value={technicianNote}
                   onChange={(e) => setTechnicianNote(e.target.value)}
-                  placeholder="تم تغيير أيسي الشحن الأصلي وتجربة اللمس..."
+                  placeholder="ملاحظات الفحص والقطع المستخدمة..."
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
                 ></textarea>
               </div>
 
-              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">
-                تحديث وحفظ التغييرات
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-600/20">
+                حفظ الخدمات والتكلفة والحالة
               </button>
             </form>
           </div>

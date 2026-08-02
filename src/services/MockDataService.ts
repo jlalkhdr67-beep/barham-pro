@@ -13,6 +13,8 @@ import {
   AppNotification
 } from '../types';
 
+import { deleteAllNonOwnerUsersFromFirestore } from './firebase/firestore';
+
 const STORAGE_KEYS = {
   USERS: 'barham_mock_users',
   SHOPS: 'barham_mock_shops',
@@ -30,7 +32,7 @@ const STORAGE_KEYS = {
 
 // Storage Version to force reset when system demo data is wiped
 const STORAGE_VERSION_KEY = 'barham_storage_version';
-const CURRENT_VERSION = 'v2026_clean_zero_system';
+const CURRENT_VERSION = 'v2026_purge_zero_all_v12';
 
 function ensureCleanSystemStorage(): void {
   try {
@@ -38,6 +40,8 @@ function ensureCleanSystemStorage(): void {
     if (version !== CURRENT_VERSION) {
       Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
       localStorage.setItem(STORAGE_VERSION_KEY, CURRENT_VERSION);
+      // Asynchronously clear any non-owner users from Firestore
+      deleteAllNonOwnerUsersFromFirestore().catch((e) => console.warn('Firestore purge error:', e));
     }
   } catch (e) {
     console.warn('Error clearing legacy storage:', e);
@@ -49,8 +53,8 @@ const INITIAL_USERS: UserProfile[] = [
   {
     uid: 'admin-main',
     email: 'brhmyrwhy39@gmail.com',
-    displayName: 'مالك المنصة الرئيسي (برهام)',
-    phoneNumber: '07700000000',
+    displayName: 'مالك المنصة الرئيسي (برهم)',
+    phoneNumber: '07755387770',
     role: 'admin',
     createdAt: new Date().toISOString(),
     status: 'active'
@@ -139,6 +143,16 @@ export class MockDataService {
     this.saveUsers(users);
   }
 
+  static purgeNonOwnerUsers(): UserProfile[] {
+    const cleanUsers = this.getUsers().filter((u) => {
+      const email = (u.email || '').toLowerCase().trim();
+      return email === 'brhmyrwhy39@gmail.com' || u.role === 'admin';
+    });
+    this.saveUsers(cleanUsers);
+    deleteAllNonOwnerUsersFromFirestore().catch((e) => console.warn('Firestore purge error:', e));
+    return cleanUsers;
+  }
+
   // Shops
   static getShops(): Shop[] {
     return loadCollection<Shop>(STORAGE_KEYS.SHOPS, INITIAL_SHOPS);
@@ -184,7 +198,19 @@ export class MockDataService {
 
   static addShopRequest(req: ShopRequest): ShopRequest {
     const list = this.getShopRequests();
-    list.push(req);
+    const existingIndex = list.findIndex(
+      (r) =>
+        r.status === 'pending' &&
+        ((req.ownerId && r.ownerId === req.ownerId) ||
+          (req.email && r.email.toLowerCase() === req.email.toLowerCase()) ||
+          (req.shopName && r.shopName.toLowerCase() === req.shopName.toLowerCase()))
+    );
+    if (existingIndex !== -1) {
+      list[existingIndex] = { ...list[existingIndex], ...req, id: list[existingIndex].id };
+      this.saveShopRequests(list);
+      return list[existingIndex];
+    }
+    list.unshift(req);
     this.saveShopRequests(list);
     return req;
   }

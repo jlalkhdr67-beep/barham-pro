@@ -9,6 +9,7 @@ export interface ShopRequest {
   city: string;
   address?: string;
   description: string;
+  category?: string;
   logoUrl?: string;
   ownerId?: string;
   status: 'pending' | 'approved' | 'rejected';
@@ -137,12 +138,14 @@ export interface Product {
 }
 
 export type MaintenanceStatus =
-  | 'received'      // تم الاستلام
-  | 'inspecting'    // قيد الفحص
-  | 'awaiting_approval' // بانتظار الموافقة
-  | 'repairing'     // قيد الإصلاح
-  | 'ready'         // جاهز للتسليم
-  | 'delivered';    // تم التسليم
+  | 'pending_owner_approval' // بانتظار موافقة المالك
+  | 'received'               // تم القبول والاستلام
+  | 'inspecting'             // قيد الفحص والتشخيص
+  | 'awaiting_approval'      // بانتظار موافقة العميل
+  | 'repairing'              // قيد الإصلاح
+  | 'ready'                  // جاهز للتسليم
+  | 'delivered'              // تم التسليم النهائي
+  | 'rejected';              // تم رفض الطلب
 
 export interface MaintenanceStage {
   status: MaintenanceStatus;
@@ -169,6 +172,8 @@ export interface MaintenanceTicket {
   progressPercent: number; // 0 - 100
   estimatedCostIQD: number;
   finalCostIQD?: number;
+  selectedServices?: string[];
+  rejectionReason?: string;
   createdAt: string;
   updatedAt: string;
   stages: MaintenanceStage[];

@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   X,
   Mail,
@@ -15,7 +16,8 @@ import {
   Camera,
   Image as ImageIcon,
   CheckCircle2,
-  Sparkles
+  Sparkles,
+  Crown
 } from 'lucide-react';
 import { useAuth, MockConfirmationResult } from '../../context/AuthContext';
 import { UserRole } from '../../types';
@@ -52,6 +54,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
   // Shop Owner Registration Fields
   const [ownerName, setOwnerName] = useState('');
   const [shopName, setShopName] = useState('');
+  const [category, setCategory] = useState('هواتف');
   const [coverUrl, setCoverUrl] = useState('https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&q=80');
   const [logoUrl, setLogoUrl] = useState('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&q=80');
   const [city, setCity] = useState('بغداد');
@@ -129,13 +132,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
         } else if (registerType === 'owner') {
           await registerShopOwner({
             ownerName: ownerName || 'صاحب المحل',
-            shopName: shopName || 'مركز صيانة برهام',
+            shopName: shopName || 'مركز صيانة برهم',
             email,
             phone: phoneNumber || '07701234567',
             pass: password,
             city,
             address,
             description,
+            category,
             logoUrl,
             coverUrl,
           });
@@ -220,8 +224,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div id="recaptcha-container-modal"></div>
       <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 relative shadow-2xl text-slate-100 my-6 max-h-[92vh] overflow-y-auto custom-scrollbar">
         {/* Close Button */}
@@ -485,7 +489,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                       required
                       value={ownerName}
                       onChange={(e) => setOwnerName(e.target.value)}
-                      placeholder="م. برهام الجبوري"
+                      placeholder="م. برهم الجبوري"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                   </div>
@@ -497,7 +501,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                       required
                       value={shopName}
                       onChange={(e) => setShopName(e.target.value)}
-                      placeholder="مركز برهام للصيانة المتقدمة"
+                      placeholder="مركز برهم للصيانة المتقدمة"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-purple-500"
                     />
                   </div>
@@ -542,6 +546,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs text-slate-300 mb-1 font-bold">التصنيف الرئيسي للمحل</label>
+                    <select
+                      value={category}
+                      onChange={(e) => setCategory(e.target.value)}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-3 text-xs text-white focus:outline-none focus:border-purple-500"
+                    >
+                      <option value="هواتف">هواتف (بيع وصيانة)</option>
+                      <option value="صيانة وحلول الهواتف الذكية">صيانة وحلول الهواتف الذكية</option>
+                      <option value="صيانة أبل وأندرويد">صيانة أبل وأندرويد</option>
+                      <option value="إلكترونيات واكسسوارات">إلكترونيات واكسسوارات</option>
+                      <option value="قطع غيار ومستلزمات">قطع غيار ومستلزمات</option>
+                    </select>
+                  </div>
+
                   <div>
                     <label className="block text-xs text-slate-300 mb-1 font-bold">المدينة</label>
                     <select
@@ -796,6 +815,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

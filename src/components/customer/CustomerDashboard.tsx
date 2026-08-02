@@ -154,15 +154,15 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         serialNumber,
         issueDescription,
         deviceImage: deviceImage || undefined,
-        status: 'received',
-        progressPercent: 15,
-        estimatedCostIQD: 50000,
+        status: 'pending_owner_approval',
+        progressPercent: 0,
+        estimatedCostIQD: 0,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         stages: [
-          { status: 'received', title: 'تم استلام الجهاز في المركز', date: 'الآن', completed: true },
-          { status: 'inspecting', title: 'قيد الفحص الفني والتشخيص', date: '-', completed: false },
-          { status: 'awaiting_approval', title: 'بانتظار موافقة الزبون على التكلفة', date: '-', completed: false },
+          { status: 'pending_owner_approval', title: 'تم إرسال الطلب - بانتظار موافقة صاحب المحل', date: 'الآن', completed: true },
+          { status: 'received', title: 'تمت موافقة المالك واستلام الطلب', date: '-', completed: false },
+          { status: 'inspecting', title: 'قيد الفحص وتحديد الخدمات والتكلفة', date: '-', completed: false },
           { status: 'repairing', title: 'قيد الإصلاح وتبديل القطع', date: '-', completed: false },
           { status: 'ready', title: 'جاهز للتسليم', date: '-', completed: false },
           { status: 'delivered', title: 'تم التسليم بنجاح', date: '-', completed: false },
@@ -274,7 +274,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             <Smartphone className="w-6 h-6" />
           </div>
           <div>
-            <div className="text-xl font-black text-white">3</div>
+            <div className="text-xl font-black text-white">{maintenanceTickets.length}</div>
             <div className="text-xs text-slate-400 font-medium">أجهزتي المسجلة</div>
           </div>
         </div>
@@ -818,43 +818,99 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
           {/* List of All Customer Maintenance Tickets */}
           <div>
-            <h4 className="text-lg font-black text-white mb-4">طلبات الصيانة السابقة والنشطة</h4>
+            <h4 className="text-lg font-black text-white mb-4">طلبات الصيانة وتتبع الحالة</h4>
             <div className="space-y-4">
-              {maintenanceTickets.map((ticket) => (
-                <div key={ticket.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-lg">
-                  <div className="flex flex-wrap items-center justify-between gap-4">
-                    <div className="flex items-start gap-4">
-                      {ticket.deviceImage && (
-                        <img
-                          src={ticket.deviceImage}
-                          alt="صورة الجهاز"
-                          className="w-16 h-16 rounded-xl object-cover border border-slate-700 bg-slate-950 flex-shrink-0"
-                        />
-                      )}
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2.5 py-0.5 rounded-full font-bold">
-                            #{ticket.ticketNumber}
-                          </span>
-                          <span className="text-xs text-slate-400">{new Date(ticket.createdAt).toLocaleDateString('ar-IQ')}</span>
+              {maintenanceTickets.map((ticket) => {
+                const isPending = ticket.status === 'pending_owner_approval';
+                const isRejected = ticket.status === 'rejected';
+
+                return (
+                  <div
+                    key={ticket.id}
+                    className={`bg-slate-900 border rounded-2xl p-5 shadow-lg space-y-3 ${
+                      isPending
+                        ? 'border-amber-500/50 bg-slate-900/90'
+                        : isRejected
+                        ? 'border-red-500/40 opacity-80'
+                        : 'border-slate-800'
+                    }`}
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-4">
+                      <div className="flex items-start gap-4">
+                        {ticket.deviceImage && (
+                          <img
+                            src={ticket.deviceImage}
+                            alt="صورة الجهاز"
+                            className="w-16 h-16 rounded-xl object-cover border border-slate-700 bg-slate-950 flex-shrink-0"
+                          />
+                        )}
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/30 px-2.5 py-0.5 rounded-full font-bold">
+                              #{ticket.ticketNumber}
+                            </span>
+                            {isPending ? (
+                              <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 px-3 py-0.5 rounded-full font-bold animate-pulse">
+                                ⏳ بانتظار موافقة صاحب المحل أولاً
+                              </span>
+                            ) : isRejected ? (
+                              <span className="text-xs bg-red-500/20 text-red-400 border border-red-500/40 px-3 py-0.5 rounded-full font-bold">
+                                🛑 تم رفض الطلب
+                              </span>
+                            ) : (
+                              <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-0.5 rounded-full font-bold">
+                                ✅ تمت موافقة المالك - قيد الصيانة
+                              </span>
+                            )}
+                            <span className="text-xs text-slate-400">{new Date(ticket.createdAt).toLocaleDateString('ar-IQ')}</span>
+                          </div>
+
+                          <h4 className="text-base font-bold text-white">{ticket.deviceType}</h4>
+                          <p className="text-xs text-slate-300">وصف العطل: {ticket.issueDescription}</p>
+
+                          {/* Selected Services by Owner */}
+                          {ticket.selectedServices && ticket.selectedServices.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                              <span className="text-[11px] text-amber-300 font-bold">الخدمات المحددة من المحل:</span>
+                              {ticket.selectedServices.map((srv, idx) => (
+                                <span key={idx} className="bg-slate-800 text-slate-200 border border-slate-700 text-[10px] px-2 py-0.5 rounded-lg">
+                                  {srv}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          {isPending && (
+                            <div className="bg-amber-950/30 border border-amber-500/30 text-amber-300 text-xs p-2.5 rounded-xl mt-2">
+                              💡 تم إرسال طلبك بنجاح. سيقوم صاحب المحل بمراجعة الطلب والموافقة عليه أولاً، ثم ملء الخدمات المعتمدة والتكلفة النهائية.
+                            </div>
+                          )}
+
+                          {isRejected && (
+                            <div className="bg-red-950/30 border border-red-500/30 text-red-300 text-xs p-2.5 rounded-xl mt-2">
+                              🛑 {ticket.rejectionReason || 'اعتذر صاحب المحل عن قبول الطلب لعدم توفر قطع الغيار أو إمكانية الصيانة حالياً.'}
+                            </div>
+                          )}
                         </div>
-                        <h4 className="text-base font-bold text-white">{ticket.deviceType}</h4>
-                        <p className="text-xs text-slate-400 mt-1">{ticket.issueDescription}</p>
+                      </div>
+
+                      <div className="text-right">
+                        {ticket.estimatedCostIQD > 0 ? (
+                          <div className="text-base font-black text-emerald-400">{formatIQD(ticket.estimatedCostIQD)}</div>
+                        ) : (
+                          <div className="text-xs text-slate-400">التكلفة: قيد التحديد من المالك</div>
+                        )}
+                        <button
+                          onClick={() => handleShowCodeModal(`تذكرة صيانة ${ticket.ticketNumber}`, ticket.ticketNumber)}
+                          className="mt-2 text-xs text-blue-400 hover:underline flex items-center gap-1 justify-end"
+                        >
+                          <span>عرض كود التذكرة QR</span>
+                        </button>
                       </div>
                     </div>
-
-                    <div className="text-right">
-                      <div className="text-sm font-bold text-emerald-400">{formatIQD(ticket.estimatedCostIQD)}</div>
-                      <button
-                        onClick={() => handleShowCodeModal(`تذكرة صيانة ${ticket.ticketNumber}`, ticket.ticketNumber)}
-                        className="mt-2 text-xs text-blue-400 hover:underline flex items-center gap-1 justify-end"
-                      >
-                        <span>عرض كود التذكرة QR</span>
-                      </button>
-                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

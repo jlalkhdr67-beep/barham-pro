@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { X, User, Upload, Check, Camera, CheckCircle2, Clock, AlertCircle } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { MockDataService } from '../../services/MockDataService';
@@ -18,6 +19,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
   const [uploadingImg, setUploadingImg] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
 
   const [pendingReq, setPendingReq] = useState<ProfileChangeRequest | null>(null);
 
@@ -45,6 +47,24 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
   const isCustomer = userProfile.role === 'customer';
   const isAdmin = userProfile.role === 'admin';
   const isOwner = userProfile.role === 'owner';
+
+  const handleFileUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      setErrorMsg('يرجى اختيار ملف صورة صالح (JPG, PNG, WEBP...)');
+      return;
+    }
+    setErrorMsg('');
+    setUploadingImg(true);
+    try {
+      const url = await uploadProductImage(file, 'avatars');
+      setPhotoURL(url);
+    } catch (err) {
+      console.error(err);
+      setErrorMsg('فشل رفع الصورة، يرجى المحاولة مرة أخرى.');
+    } finally {
+      setUploadingImg(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -94,20 +114,20 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200" dir="rtl">
-      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 relative text-slate-100 shadow-2xl space-y-6">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200" dir="rtl">
+      <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-lg p-6 sm:p-8 relative text-slate-100 shadow-2xl space-y-6 my-auto max-h-[90vh] overflow-y-auto custom-scrollbar">
         <button
           onClick={onClose}
-          className="absolute top-5 left-5 text-slate-400 hover:text-white p-1.5 rounded-xl bg-slate-800/50 transition-colors"
+          className="absolute top-5 left-5 text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800/60 hover:bg-slate-700 transition-colors"
         >
           <X className="w-5 h-5" />
         </button>
 
         {/* Modal Header */}
         <div className="flex items-center gap-3 border-b border-slate-800 pb-4">
-          <div className="w-10 h-10 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold">
-            <User className="w-5 h-5" />
+          <div className="w-12 h-12 rounded-2xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400 font-bold shadow-lg">
+            <User className="w-6 h-6" />
           </div>
           <div>
             <h3 className="text-lg font-black text-white">تعديل الملف الشخصي والصورة</h3>
@@ -160,56 +180,64 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
         )}
 
         <form onSubmit={handleSubmit} className="space-y-5 text-xs">
-          {/* Avatar Preview & Upload */}
-          <div className="flex flex-col sm:flex-row items-center gap-4 bg-slate-950/60 border border-slate-800 p-4 rounded-2xl">
-            <div className="relative group shrink-0">
-              <div className="w-20 h-20 rounded-2xl bg-slate-800 border-2 border-blue-500/40 overflow-hidden flex items-center justify-center text-blue-400 font-black text-2xl shadow-xl">
-                {photoURL ? (
-                  <img src={photoURL} alt="الصورة الشخصية" className="w-full h-full object-cover" />
-                ) : (
-                  <span>{displayName ? displayName.charAt(0) : 'U'}</span>
-                )}
+          {/* Avatar Preview & Upload Drag & Drop Section */}
+          <div className="space-y-2">
+            <label className="block text-slate-300 font-bold">رفع صورة شخصية جديدة من جهازك <span className="text-blue-400">*</span></label>
+            
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                setIsDragging(true);
+              }}
+              onDragLeave={() => setIsDragging(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setIsDragging(false);
+                const file = e.dataTransfer.files?.[0];
+                if (file) handleFileUpload(file);
+              }}
+              className={`border-2 border-dashed rounded-2xl p-5 text-center transition-all flex flex-col items-center justify-center gap-3 relative bg-slate-950/60 ${
+                isDragging ? 'border-blue-500 bg-blue-500/10' : 'border-slate-800 hover:border-slate-700'
+              }`}
+            >
+              <div className="relative group shrink-0">
+                <div className="w-24 h-24 rounded-2xl bg-slate-800 border-2 border-blue-500/40 overflow-hidden flex items-center justify-center text-blue-400 font-black text-3xl shadow-2xl">
+                  {photoURL ? (
+                    <img src={photoURL} alt="الصورة الشخصية" className="w-full h-full object-cover" />
+                  ) : (
+                    <span>{displayName ? displayName.charAt(0) : 'U'}</span>
+                  )}
+                </div>
+                <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-1.5 rounded-lg shadow-md border border-slate-900">
+                  <Camera className="w-4 h-4" />
+                </div>
               </div>
-              <div className="absolute -bottom-1 -right-1 bg-blue-600 text-white p-1 rounded-lg shadow-md border border-slate-900">
-                <Camera className="w-3.5 h-3.5" />
-              </div>
-            </div>
 
-            <div className="space-y-2 flex-1 w-full text-right">
-              <label className="block text-slate-300 font-bold">الصورة الشخصية / الرمز</label>
-              <div className="flex items-center gap-2">
-                <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl transition-all flex items-center gap-1.5 shadow-md shrink-0">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>{uploadingImg ? 'جاري الرفع...' : 'رفع صورة جديدة'}</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    disabled={isOwner && !!pendingReq}
-                    className="hidden"
-                    onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (file) {
-                        setUploadingImg(true);
-                        try {
-                          const url = await uploadProductImage(file, 'avatars');
-                          setPhotoURL(url);
-                        } catch (err) {
-                          console.error(err);
-                        } finally {
-                          setUploadingImg(false);
-                        }
-                      }
-                    }}
-                  />
-                </label>
+              <div className="space-y-1">
+                <p className="font-bold text-slate-200 text-sm">اضغط أو اسحب الصورة هنا لرفعها من جهازك</p>
+                <p className="text-[11px] text-slate-500">تدعم جميع صيغ الصور (JPG, PNG, WEBP)</p>
               </div>
-              <p className="text-[10px] text-slate-500">يمكنك رفع صورة مباشرة أو اختيار رمز من المعرض أدناه</p>
+
+              <label className="cursor-pointer bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-5 py-2.5 rounded-xl transition-all flex items-center gap-2 shadow-lg shadow-blue-600/20 active:scale-95">
+                <Upload className="w-4 h-4" />
+                <span>{uploadingImg ? 'جاري معالجة ورفع الصورة...' : 'اختر صورة من الجهاز'}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={uploadingImg || (isOwner && !!pendingReq)}
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleFileUpload(file);
+                  }}
+                />
+              </label>
             </div>
           </div>
 
           {/* Preset Avatars */}
-          <div>
-            <label className="block text-slate-300 font-bold mb-2">اختر صورة رمزية جاهزة:</label>
+          <div className="space-y-2">
+            <label className="block text-slate-300 font-bold">أو اختر صورة رمزية جاهزة:</label>
             <div className="grid grid-cols-5 gap-2">
               {[
                 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&q=80',
@@ -240,7 +268,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
 
           {/* Image URL Input */}
           <div>
-            <label className="block text-slate-300 font-bold mb-1.5">رابط الصورة مباشرة (اختياري)</label>
+            <label className="block text-slate-300 font-bold mb-1.5">أو ضع رابط صورة مباشرة (اختياري)</label>
             <input
               type="url"
               disabled={isOwner && !!pendingReq}
@@ -276,10 +304,10 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
             <button
               type="submit"
               disabled={uploadingImg || (isOwner && !!pendingReq)}
-              className={`flex-1 font-bold py-3 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${
+              className={`flex-1 font-bold py-3.5 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${
                 isOwner && !!pendingReq
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                  : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-blue-600/20'
+                  : 'bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white shadow-blue-600/20 active:scale-95'
               }`}
             >
               <Check className="w-4 h-4" />
@@ -294,13 +322,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ isOpen, onCl
             <button
               type="button"
               onClick={onClose}
-              className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 px-5 rounded-xl transition-all"
+              className="bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3.5 px-5 rounded-xl transition-all"
             >
               إلغاء
             </button>
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

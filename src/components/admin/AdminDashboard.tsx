@@ -62,6 +62,19 @@ import { formatIQD, printInvoicePDF, printThermalReceipt88mm, printThermalReceip
 import { ShopDetailModal } from '../shops/ShopDetailModal';
 import { useAuth } from '../../context/AuthContext';
 import { ConfirmModal } from '../common/ConfirmModal';
+import {
+  updateUserProfile as updateFirestoreUserProfile,
+  setShopInFirestore,
+  getAllShopsFromFirestore,
+  getAllShopRequestsFromFirestore,
+  getAllUsersFromFirestore,
+  updateShopRequestInFirestore,
+  deleteShopFromFirestore,
+  deleteAllShopsFromFirestore,
+  subscribeToShopRequestsFromFirestore,
+  subscribeToShopsFromFirestore,
+  subscribeToUsersFromFirestore
+} from '../../services/firebase';
 
 interface AdminDashboardProps {
   onSelectShop?: (shop: Shop) => void;
@@ -155,22 +168,102 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
 
   useEffect(() => {
     fetchAdminData();
+
+    const unsubRequests = subscribeToShopRequestsFromFirestore((reqs) => {
+      if (reqs && reqs.length > 0) {
+        setShopRequests((prev) => {
+          const map = new Map<string, ShopRequest>();
+          prev.forEach((r) => map.set(r.id, r));
+          reqs.forEach((r) => map.set(r.id, r));
+          const list = Array.from(map.values());
+          MockDataService.saveShopRequests(list);
+          return list;
+        });
+      }
+    });
+
+    const unsubShops = subscribeToShopsFromFirestore((shps) => {
+      if (shps && shps.length > 0) {
+        setShops((prev) => {
+          const map = new Map<string, Shop>();
+          prev.forEach((s) => map.set(s.id, s));
+          shps.forEach((s) => map.set(s.id, s));
+          const list = Array.from(map.values());
+          MockDataService.saveShops(list);
+          return list;
+        });
+      }
+    });
+
+    const unsubUsers = subscribeToUsersFromFirestore((usrs) => {
+      if (usrs && usrs.length > 0) {
+        setUsers((prev) => {
+          const map = new Map<string, UserProfile>();
+          prev.forEach((u) => map.set(u.uid, u));
+          usrs.forEach((u) => map.set(u.uid, u));
+          const list = Array.from(map.values());
+          MockDataService.saveUsers(list);
+          return list;
+        });
+      }
+    });
+
+    return () => {
+      unsubRequests();
+      unsubShops();
+      unsubUsers();
+    };
   }, []);
 
   const fetchAdminData = async () => {
     setLoading(true);
     try {
-      setShops(MockDataService.getShops());
-      setShopRequests(MockDataService.getShopRequests());
+      const [fsShops, fsRequests, fsUsers] = await Promise.all([
+        getAllShopsFromFirestore(),
+        getAllShopRequestsFromFirestore(),
+        getAllUsersFromFirestore()
+      ]);
+
+      const mockShops = MockDataService.getShops();
+      const mockRequests = MockDataService.getShopRequests();
+      const mockUsers = MockDataService.getUsers();
+
+      // Merge shops
+      const shopMap = new Map<string, Shop>();
+      mockShops.forEach((s) => shopMap.set(s.id, s));
+      fsShops.forEach((s) => shopMap.set(s.id, s));
+      const combinedShops = Array.from(shopMap.values());
+
+      // Merge requests
+      const requestMap = new Map<string, ShopRequest>();
+      mockRequests.forEach((r) => requestMap.set(r.id, r));
+      fsRequests.forEach((r) => requestMap.set(r.id, r));
+      const combinedRequests = Array.from(requestMap.values());
+
+      // Merge users
+      const userMap = new Map<string, UserProfile>();
+      mockUsers.forEach((u) => userMap.set(u.uid, u));
+      fsUsers.forEach((u) => userMap.set(u.uid, u));
+      const combinedUsers = Array.from(userMap.values());
+
+      MockDataService.saveShops(combinedShops);
+      MockDataService.saveShopRequests(combinedRequests);
+      MockDataService.saveUsers(combinedUsers);
+
+      setShops(combinedShops);
+      setShopRequests(combinedRequests);
+      setUsers(combinedUsers);
       setProfileRequests(MockDataService.getProfileChangeRequests());
-      setUsers(MockDataService.getUsers());
       setProducts(MockDataService.getProducts());
       setTickets(MockDataService.getTickets());
       setInvoices(MockDataService.getInvoices());
       setOffers(MockDataService.getOffers());
       setStaffList(MockDataService.getStaff());
     } catch (err) {
-      console.error('Error loading Admin Data:', err);
+      console.error('Error loading Admin Data from Firestore:', err);
+      setShops(MockDataService.getShops());
+      setShopRequests(MockDataService.getShopRequests());
+      setUsers(MockDataService.getUsers());
     } finally {
       setLoading(false);
     }
@@ -210,23 +303,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
   // Handlers for Shop Requests
   const handleApproveShopRequest = async (request: ShopRequest) => {
     try {
+      let targetOwnerId = request.ownerId;
+      if (!targetOwnerId) {
+        const foundUser = users.find(
+          (u) => u.email?.toLowerCase() === request.email?.toLowerCase() || (request.phone && u.phoneNumber === request.phone)
+        );
+        if (foundUser) {
+          targetOwnerId = foundUser.uid;
+        }
+      }
+
       const newShopId = `shop_${Date.now()}`;
       const newShopDoc: Shop = {
         id: newShopId,
-        ownerId: request.ownerId || '',
+        ownerId: targetOwnerId || '',
         name: request.shopName,
         slug: request.shopName.toLowerCase().replace(/\s+/g, '-'),
         logo: request.logoUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=200&q=80',
         coverImage: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=800&q=80',
         description: request.description,
-        category: 'صيانة وحلول الهواتف الذكية',
+        category: request.category || 'هواتف',
         city: request.city,
         address: request.address || 'العنوان الرئيسي',
         phone: request.phone,
-        rating: 5.0,
+        rating: 0,
         reviewsCount: 0,
         status: 'approved',
-        isDetailsCompleted: false,
+        isDetailsCompleted: true,
         workingHours: '09:00 ص - 10:00 م',
         isOpen: true,
         branches: [
@@ -246,13 +349,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
 
       MockDataService.addShop(newShopDoc);
       MockDataService.updateShopRequest(request.id, { status: 'approved' });
-      if (request.ownerId) {
-        MockDataService.updateUser(request.ownerId, { status: 'active', shopId: newShopId, role: 'owner' });
+      try {
+        await setShopInFirestore(newShopDoc);
+        await updateShopRequestInFirestore(request.id, { status: 'approved' });
+      } catch (e) {
+        console.warn('Firestore setShop / updateShopRequest error:', e);
       }
 
-      setShops(MockDataService.getShops());
-      setShopRequests(MockDataService.getShopRequests());
-      setUsers(MockDataService.getUsers());
+      if (targetOwnerId) {
+        MockDataService.updateUser(targetOwnerId, { status: 'active', shopId: newShopId, role: 'owner' });
+        try {
+          await updateFirestoreUserProfile(targetOwnerId, { status: 'active', shopId: newShopId, role: 'owner' });
+        } catch (e) {
+          console.warn('Firestore updateUserProfile error:', e);
+        }
+      }
+
+      await fetchAdminData();
     } catch (err) {
       console.error('Error approving shop request:', err);
     }
@@ -261,11 +374,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
   const handleRejectShopRequest = async (requestId: string, ownerId?: string) => {
     try {
       MockDataService.updateShopRequest(requestId, { status: 'rejected' });
+      try {
+        await updateShopRequestInFirestore(requestId, { status: 'rejected' });
+      } catch (e) {}
+
       if (ownerId) {
         MockDataService.updateUser(ownerId, { status: 'suspended' });
+        try {
+          await updateFirestoreUserProfile(ownerId, { status: 'suspended' });
+        } catch (e) {}
       }
-      setShopRequests(MockDataService.getShopRequests());
-      setUsers(MockDataService.getUsers());
+      await fetchAdminData();
     } catch (err) {
       console.error('Error rejecting shop request:', err);
     }
@@ -275,11 +394,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
   const handleUpdateShopStatus = async (shopId: string, status: 'approved' | 'rejected' | 'suspended') => {
     try {
       MockDataService.updateShop(shopId, { status });
+      try {
+        await setShopInFirestore({ id: shopId, status } as any);
+      } catch (e) {}
       const targetShop = shops.find((s) => s.id === shopId);
       if (targetShop && targetShop.ownerId) {
+        const newStatus = status === 'approved' ? 'active' : 'suspended';
         MockDataService.updateUser(targetShop.ownerId, {
-          status: status === 'approved' ? 'active' : 'suspended'
+          status: newStatus
         });
+        try {
+          await updateFirestoreUserProfile(targetShop.ownerId, { status: newStatus });
+        } catch (e) {}
       }
       setShops(MockDataService.getShops());
       setUsers(MockDataService.getUsers());
@@ -292,14 +418,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
     try {
       const targetShop = shops.find((s) => s.id === shopId);
       MockDataService.deleteShop(shopId);
+      await deleteShopFromFirestore(shopId);
       if (targetShop && targetShop.ownerId) {
         MockDataService.deleteUser(targetShop.ownerId);
       }
-      setShops(MockDataService.getShops());
+      setShops((prev) => prev.filter((s) => s.id !== shopId));
       setUsers(MockDataService.getUsers());
     } catch (err) {
       console.error(err);
     }
+  };
+
+  const handlePurgeAllShops = async () => {
+    try {
+      MockDataService.saveShops([]);
+      await deleteAllShopsFromFirestore();
+      setShops([]);
+    } catch (err) {
+      console.error('Error purging all shops:', err);
+    }
+  };
+
+  const requestPurgeAllShops = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'تأكيد تصفير وحذف جميع المحلات',
+      message: `هل أنت متأكد من رغبتك في حذف وتصفير جميع المحلات (${shops.length} محل) نهائياً من قاعدة البيانات والسيرفر؟`,
+      onConfirm: () => handlePurgeAllShops(),
+    });
   };
 
   const requestDeleteShop = (shopId: string, shopName: string) => {
@@ -359,6 +505,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
     });
   };
 
+  const handlePurgeNonOwnerUsers = () => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'تأكيد مسح كافة البريدات المسجلة',
+      message: 'هل أنت متأكد من مسح وحذف كل البريدات والحسابات المسجلة بالمنصة نهائياً والاحتفاظ فقط بحساب المالك الرئيسي (برهم)؟',
+      confirmText: 'تأكيد مسح البريدات',
+      danger: true,
+      onConfirm: () => {
+        const remaining = MockDataService.purgeNonOwnerUsers();
+        setUsers(remaining);
+        setConfirmModal({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+      }
+    });
+  };
+
   const handleSaveUserEdit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingUser) return;
@@ -399,12 +560,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
   const handleUpdateTicketStatus = async (ticketId: string, newStatus: MaintenanceStatus) => {
     try {
       const progressMap: Record<MaintenanceStatus, number> = {
+        pending_owner_approval: 0,
         received: 15,
         inspecting: 35,
         awaiting_approval: 50,
         repairing: 75,
         ready: 95,
         delivered: 100,
+        rejected: 0,
       };
 
       MockDataService.updateTicket(ticketId, {
@@ -476,7 +639,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
     e.preventDefault();
     try {
       const selectedShopObj = shops.find((s) => s.id === offerForm.shopId);
-      const shopName = selectedShopObj ? selectedShopObj.name : offerForm.shopName || 'مركز برهام العام';
+      const shopName = selectedShopObj ? selectedShopObj.name : offerForm.shopName || 'مركز برهم العام';
 
       if (editingOffer) {
         MockDataService.updateOffer(editingOffer.id, {
@@ -532,10 +695,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
   };
 
   // Calculations for Stats
-  const pendingShopsList = shops.filter((s) => s.status === 'pending');
   const pendingShopRequestsList = shopRequests.filter((r) => r.status === 'pending');
+  const pendingShopsList = shops.filter(
+    (s) =>
+      s.status === 'pending' &&
+      !pendingShopRequestsList.some(
+        (req) => req.ownerId === s.ownerId || req.shopName === s.name
+      )
+  );
   const pendingProfileRequests = profileRequests.filter((r) => r.status === 'pending');
-  const totalPendingCount = pendingShopsList.length + pendingShopRequestsList.length + pendingProfileRequests.length;
+  const totalPendingCount = pendingShopRequestsList.length + pendingShopsList.length + pendingProfileRequests.length;
 
   const shopOwnersCount = users.filter((u) => u.role === 'owner').length;
   const customersCount = users.filter((u) => u.role === 'customer').length;
@@ -629,7 +798,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
             </div>
             <div>
               <div className="text-sm font-bold text-white flex items-center gap-1.5">
-                <span>{userProfile?.displayName || 'أ. برهام الجبوري'}</span>
+                <span>{userProfile?.displayName || 'أ. برهم الجبوري'}</span>
                 <Edit3 className="w-3.5 h-3.5 text-slate-400 group-hover:text-blue-400" />
               </div>
               <div className="text-[10px] text-emerald-400 font-mono">المالك العام - Super Admin</div>
@@ -743,7 +912,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
       {/* 3. NAVIGATION TABS */}
       <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-2 flex space-x-1 space-x-reverse overflow-x-auto shadow-xl">
         {[
-          { id: 'pending_shops', label: `طلبات الموافقات (${pendingShopsList.length})`, icon: <AlertOctagon className="w-4 h-4 text-amber-400" /> },
+          { id: 'pending_shops', label: `طلبات الموافقات (${totalPendingCount})`, icon: <AlertOctagon className="w-4 h-4 text-amber-400" /> },
           { id: 'shops', label: 'إدارة المحلات', icon: <Store className="w-4 h-4 text-blue-400" /> },
           { id: 'users', label: 'إدارة المستخدمين', icon: <Users className="w-4 h-4 text-purple-400" /> },
           { id: 'products', label: 'إدارة المنتجات', icon: <Package className="w-4 h-4 text-emerald-400" /> },
@@ -1019,10 +1188,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="space-y-6">
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
-              <h2 className="text-xl font-black text-white flex items-center gap-2">
-                <Store className="w-6 h-6 text-blue-400" />
-                <span>إدارة المحلات والمراكز المسجلة</span>
-              </h2>
+              <div className="flex items-center gap-3">
+                <h2 className="text-xl font-black text-white flex items-center gap-2">
+                  <Store className="w-6 h-6 text-blue-400" />
+                  <span>إدارة المحلات والمراكز المسجلة ({shops.length})</span>
+                </h2>
+                {shops.length > 0 && (
+                  <button
+                    onClick={requestPurgeAllShops}
+                    className="bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-xs font-bold px-3 py-1.5 rounded-xl transition-all flex items-center gap-1.5"
+                    title="تصفير ومسح جميع المحلات من قاعدة البيانات"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>تصفير المحلات ({shops.length})</span>
+                  </button>
+                )}
+              </div>
               <p className="text-xs text-slate-400 mt-1">التحكم الكامل بكافة المراكز، التعديل، التعليق، أو الحذف النهائي</p>
             </div>
 
@@ -1149,8 +1330,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
               <p className="text-xs text-slate-400 mt-1">التحكم بكافة الحسابات (الزبائن، أصحاب المحلات، والمدراء)</p>
             </div>
 
-            {/* Role Filter */}
+            {/* Role Filter & Purge Button */}
             <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              <button
+                onClick={handlePurgeNonOwnerUsers}
+                className="px-3.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 shrink-0"
+                title="حذف جميع البريدات المسجلة ماعدا المالك"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>حذف البريدات (عدا المالك)</span>
+              </button>
               {[
                 { id: 'all', label: 'جميع الحسابات' },
                 { id: 'customer', label: 'الزبائن' },
@@ -1320,7 +1509,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
                   </div>
                   <span className="text-[10px] bg-blue-500/20 text-blue-300 px-2 py-0.5 rounded font-bold">{p.category}</span>
                   <h4 className="font-bold text-white text-sm line-clamp-1 mt-1">{p.name}</h4>
-                  <div className="text-xs text-slate-400 mt-0.5">المحل: <span className="text-slate-200 font-bold">{p.shopName || 'مركز برهام'}</span></div>
+                  <div className="text-xs text-slate-400 mt-0.5">المحل: <span className="text-slate-200 font-bold">{p.shopName || 'مركز برهم'}</span></div>
                   <div className="text-sm font-black text-emerald-400 mt-2">{formatIQD(p.priceIQD)}</div>
                 </div>
 
@@ -1618,7 +1807,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
                 setOfferForm({
                   title: '',
                   shopId: shops[0]?.id || 'shop-1',
-                  shopName: shops[0]?.name || 'مركز برهام',
+                  shopName: shops[0]?.name || 'مركز برهم',
                   description: '',
                   discountPercentage: 20,
                   bannerUrl: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=800&q=80',

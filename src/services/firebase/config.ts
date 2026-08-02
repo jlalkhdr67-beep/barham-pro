@@ -17,6 +17,8 @@ export const firebaseConfig = {
 // Singleton App Instance
 export const app: FirebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
 
+console.log('[Firebase Config] Initialized Firebase App with Project ID:', firebaseConfig.projectId, 'AuthDomain:', firebaseConfig.authDomain);
+
 // Firebase Auth Service
 export const auth: Auth = getAuth(app);
 
