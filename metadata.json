@@ -1,0 +1,6 @@
+{
+  "name": "Barham Pro",
+  "description": "منصة إدارة محلات صيانة وبيع الهواتف والأجهزة الإلكترونية مع متجر إلكتروني ونظام صيانة متكامل",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
