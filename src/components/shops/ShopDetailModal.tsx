@@ -69,12 +69,23 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
 
   // Maintenance Request Modal State
   const [showMaintenanceModal, setShowMaintenanceModal] = useState<boolean>(false);
+  const [mCustomerName, setMCustomerName] = useState<string>(userProfile?.displayName || '');
+  const [mCustomerPhone, setMCustomerPhone] = useState<string>(userProfile?.phoneNumber || '');
   const [mDeviceName, setMDeviceName] = useState<string>('');
   const [mDeviceType, setMDeviceType] = useState<string>('هاتف أيفون');
   const [mIssueDesc, MIssueDescSet] = useState<string>('');
   const [mBranchId, setMBranchId] = useState<string>('');
   const [mImageUrl, setMImageUrl] = useState<string>('');
   const [mSuccessTicket, setMSuccessTicket] = useState<string>('');
+
+  useEffect(() => {
+    if (userProfile?.displayName && !mCustomerName) {
+      setMCustomerName(userProfile.displayName);
+    }
+    if (userProfile?.phoneNumber && !mCustomerPhone) {
+      setMCustomerPhone(userProfile.phoneNumber);
+    }
+  }, [userProfile]);
 
   // New Review Form State
   const [newRating, setNewRating] = useState<number>(5);
@@ -326,13 +337,23 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
     e.preventDefault();
     try {
       const ticketNum = `BRH-${Math.floor(1000 + Math.random() * 9000)}`;
+      const finalCustomerName = mCustomerName.trim() || userProfile?.displayName || userProfile?.email || 'زبون التطبيق';
+      const finalCustomerPhone = mCustomerPhone.trim() || userProfile?.phoneNumber || 'غير محدد';
+
+      // Update userProfile if logged in and name/phone was updated
+      if (userProfile?.uid && (mCustomerName.trim() !== userProfile.displayName || mCustomerPhone.trim() !== userProfile.phoneNumber)) {
+        MockDataService.updateUser(userProfile.uid, {
+          displayName: finalCustomerName,
+          phoneNumber: finalCustomerPhone,
+        });
+      }
 
       const newTicket: MaintenanceTicket = {
         id: `ticket_${Date.now()}`,
         ticketNumber: ticketNum,
-        customerId: userProfile?.uid || 'customer_demo_1',
-        customerName: userProfile?.displayName || 'أحمد علي العراقي',
-        customerPhone: userProfile?.phoneNumber || '07712345678',
+        customerId: userProfile?.uid || `guest_${Date.now()}`,
+        customerName: finalCustomerName,
+        customerPhone: finalCustomerPhone,
         shopId: currentShop.id,
         shopName: currentShop.name,
         deviceType: `${mDeviceType} - ${mDeviceName}`,
@@ -1329,6 +1350,32 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
             )}
 
             <form onSubmit={handleCreateMaintenanceRequest} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">اسم الزبون الكامل</label>
+                  <input
+                    type="text"
+                    required
+                    value={mCustomerName}
+                    onChange={(e) => setMCustomerName(e.target.value)}
+                    placeholder="أدخل اسمك الثلاثي"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">رقم الهاتف للتواصل</label>
+                  <input
+                    type="text"
+                    required
+                    value={mCustomerPhone}
+                    onChange={(e) => setMCustomerPhone(e.target.value)}
+                    placeholder="07700000000"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-bold mb-1">اسم العطل / موديل الجهاز</label>
                 <input
@@ -1385,7 +1432,8 @@ export const ShopDetailModal: React.FC<ShopDetailModalProps> = ({
           product={selectedProduct}
           shopPhone={shop.phone}
           shopName={shop.name}
-          hideAddToCart={true}
+          hideAddToCart={false}
+          userProfile={userProfile}
           onClose={() => setSelectedProduct(null)}
           onAddToCart={(p, q) => onAddToCart(p, q)}
         />

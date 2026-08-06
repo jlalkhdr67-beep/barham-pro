@@ -23,13 +23,23 @@ import {
   Camera,
   Upload,
   Image as ImageIcon,
-  ShoppingBag
+  ShoppingBag,
+  Bell,
+  Trash2,
+  Sparkles,
+  BookmarkCheck,
+  Calendar,
+  DollarSign,
+  XCircle
 } from 'lucide-react';
 import { MockDataService } from '../../services/MockDataService';
-import { Shop, Product, MaintenanceTicket, Invoice, Warranty, Offer } from '../../types';
+import { useAuth } from '../../context/AuthContext';
+import { Shop, Product, MaintenanceTicket, Invoice, Warranty, Offer, ProductOrder, ProductOrderStatus, AppNotification } from '../../types';
 import { formatIQD } from '../../utils/pdfGenerator';
 import { printInvoicePDF } from '../../utils/pdfGenerator';
+import { uploadProductImage } from '../../utils/storageUtils';
 import { generateBarcodeDataUrl, generateQRCodeDataUrl } from '../../utils/barcodeUtils';
+import { ProductDetailModal } from '../shops/ProductDetailModal';
 
 interface CustomerDashboardProps {
   onSelectShop: (shop: Shop) => void;
@@ -46,12 +56,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   activeTab: externalActiveTab,
   setActiveTab: externalSetActiveTab,
 }) => {
-  const [localActiveTab, setLocalActiveTab] = useState<'home' | 'marketplace' | 'maintenance' | 'invoices' | 'warranties' | 'offers' | 'favorites'>('home');
+  const { userProfile } = useAuth();
+  const [localActiveTab, setLocalActiveTab] = useState<'home' | 'marketplace' | 'maintenance' | 'invoices' | 'warranties' | 'offers' | 'favorites' | 'orders' | 'notifications'>('home');
 
   const activeTab = useMemo(() => {
     if (!externalActiveTab) return localActiveTab;
     if (externalActiveTab === 'shops') return 'home';
-    if (['home', 'marketplace', 'maintenance', 'invoices', 'warranties', 'offers', 'favorites'].includes(externalActiveTab)) {
+    if (['home', 'marketplace', 'maintenance', 'invoices', 'warranties', 'offers', 'favorites', 'orders', 'notifications'].includes(externalActiveTab)) {
       return externalActiveTab as any;
     }
     return 'home';
@@ -73,16 +84,22 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       if (el) el.scrollIntoView({ behavior: 'smooth' });
     }
   }, [externalActiveTab]);
+
   const [shops, setShops] = useState<Shop[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [maintenanceTickets, setMaintenanceTickets] = useState<MaintenanceTicket[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [warranties, setWarranties] = useState<Warranty[]>([]);
   const [offers, setOffers] = useState<Offer[]>([]);
+  const [customerOrders, setCustomerOrders] = useState<ProductOrder[]>([]);
+  const [customerNotifications, setCustomerNotifications] = useState<AppNotification[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
+  const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
 
   // New Maintenance Ticket Form Modal State
   const [showNewTicketModal, setShowNewTicketModal] = useState(false);
+  const [cCustomerName, setCCustomerName] = useState(userProfile?.displayName || '');
+  const [cCustomerPhone, setCCustomerPhone] = useState(userProfile?.phoneNumber || '');
   const [selectedShopId, setSelectedShopId] = useState('');
   const [deviceType, setDeviceType] = useState('');
   const [deviceColor, setDeviceColor] = useState('');
@@ -90,6 +107,16 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   const [issueDescription, setIssueDescription] = useState('');
   const [deviceImage, setDeviceImage] = useState('');
   const [ticketSuccessMsg, setTicketSuccessMsg] = useState('');
+  const [toastMsg, setToastMsg] = useState('');
+
+  useEffect(() => {
+    if (userProfile?.displayName && !cCustomerName) {
+      setCCustomerName(userProfile.displayName);
+    }
+    if (userProfile?.phoneNumber && !cCustomerPhone) {
+      setCCustomerPhone(userProfile.phoneNumber);
+    }
+  }, [userProfile]);
 
   // Ticket Tracking Search State
   const [trackTicketNumber, setTrackTicketNumber] = useState('');
@@ -106,7 +133,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [userProfile]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -117,6 +144,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       setInvoices(MockDataService.getInvoices());
       setWarranties(MockDataService.getWarranties());
       setOffers(MockDataService.getOffers());
+      setCustomerOrders(MockDataService.getProductOrders());
+      setCustomerNotifications(MockDataService.getNotifications());
     } catch (err) {
       console.error('Error loading local customer data:', err);
     } finally {
@@ -124,14 +153,109 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     }
   };
 
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const myOrders = useMemo(() => {
+    const cId = userProfile?.uid || 'customer_demo_1';
+    return customerOrders.filter((o) => o.customerId === cId);
+  }, [customerOrders, userProfile]);
+
+  const myNotifications = useMemo(() => {
+    const uId = userProfile?.uid || 'customer_demo_1';
+    return customerNotifications.filter((n) => n.userId === uId || n.userId === 'all');
+  }, [customerNotifications, userProfile]);
+
+  const unreadNotificationsCount = useMemo(() => {
+    return myNotifications.filter((n) => !n.read).length;
+  }, [myNotifications]);
+
+  const handleMarkNotificationRead = (notifId: string) => {
+    MockDataService.markNotificationAsRead(notifId);
+    setCustomerNotifications(MockDataService.getNotifications());
+  };
+
+  const handleMarkAllNotificationsRead = () => {
+    MockDataService.markAllNotificationsAsRead();
+    setCustomerNotifications(MockDataService.getNotifications());
+  };
+
+  const handleDeleteNotification = (notifId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    MockDataService.deleteNotification(notifId);
+    setCustomerNotifications(MockDataService.getNotifications());
+  };
+
+  const handleCustomerApproveQuote = (ticket: MaintenanceTicket) => {
+    const updatedStages = (ticket.stages || []).map((stg) => {
+      if (stg.status === 'pending_owner_approval' || stg.status === 'awaiting_approval' || stg.status === 'inspecting') {
+        return { ...stg, completed: true, date: 'الآن' };
+      }
+      return stg;
+    });
+
+    const updatedTicket: Partial<MaintenanceTicket> = {
+      status: 'inspecting',
+      progressPercent: 35,
+      updatedAt: new Date().toISOString(),
+      stages: updatedStages,
+    };
+
+    MockDataService.updateTicket(ticket.id, updatedTicket);
+    setMaintenanceTickets(MockDataService.getTickets());
+    if (foundTicket?.id === ticket.id) {
+      setFoundTicket({ ...foundTicket, ...updatedTicket } as MaintenanceTicket);
+    }
+
+    // Send notification to shop owner
+    MockDataService.addNotification({
+      userId: ticket.shopId || 'owner_demo',
+      title: 'تمت موافقة الزبون على السعر 👍',
+      message: `وافق الزبون (${ticket.customerName}) على تكلفة صيانة الجهاز (${ticket.deviceType}) بمبلغ ${formatIQD(ticket.estimatedCostIQD)} د.ع. يمكن البدء بالإصلاح الآن.`,
+      type: 'maintenance',
+      category: 'maintenance',
+      read: false
+    });
+
+    setToastMsg('تمت الموافقة على التكلفة بنجاح! بدأ العمل على جهازك الآن وظهرت مراحل الصيانة.');
+    setTimeout(() => setToastMsg(''), 3500);
+  };
+
+  const handleCustomerRejectQuote = (ticket: MaintenanceTicket) => {
+    const updatedTicket: Partial<MaintenanceTicket> = {
+      status: 'rejected',
+      rejectionReason: 'اعتذر الزبون عن قبول عرض التكلفة والخدمات.',
+      updatedAt: new Date().toISOString(),
+    };
+
+    MockDataService.updateTicket(ticket.id, updatedTicket);
+    setMaintenanceTickets(MockDataService.getTickets());
+    if (foundTicket?.id === ticket.id) {
+      setFoundTicket({ ...foundTicket, ...updatedTicket } as MaintenanceTicket);
+    }
+
+    // Send notification to shop owner
+    MockDataService.addNotification({
+      userId: ticket.shopId || 'owner_demo',
+      title: 'اعتذار الزبون عن عرض التكلفة ❌',
+      message: `اعتذر الزبون (${ticket.customerName}) عن قبول تكلفة الصيانة للجهاز (${ticket.deviceType}).`,
+      type: 'maintenance',
+      category: 'maintenance',
+      read: false
+    });
+
+    setToastMsg('تم رفض عرض السعر وإلغاء طلب الصيانة.');
+    setTimeout(() => setToastMsg(''), 3500);
+  };
+
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setDeviceImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
+      try {
+        const compressedUrl = await uploadProductImage(file, 'maintenance');
+        setDeviceImage(compressedUrl);
+      } catch (err) {
+        console.error('Error processing device image:', err);
+      } finally {
+        e.target.value = '';
+      }
     }
   };
 
@@ -141,12 +265,23 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
       const selectedShop = shops.find((s) => s.id === selectedShopId) || shops[0];
       const newTicketNumber = `BRH-${Math.floor(1000 + Math.random() * 9000)}`;
 
+      const finalCustomerName = cCustomerName.trim() || userProfile?.displayName || userProfile?.email || 'زبون التطبيق';
+      const finalCustomerPhone = cCustomerPhone.trim() || userProfile?.phoneNumber || 'غير محدد';
+
+      // Update userProfile if logged in and name/phone was updated
+      if (userProfile?.uid && (cCustomerName.trim() !== userProfile.displayName || cCustomerPhone.trim() !== userProfile.phoneNumber)) {
+        MockDataService.updateUser(userProfile.uid, {
+          displayName: finalCustomerName,
+          phoneNumber: finalCustomerPhone,
+        });
+      }
+
       const newTicket: MaintenanceTicket = {
         id: `ticket_${Date.now()}`,
         ticketNumber: newTicketNumber,
-        customerId: 'customer_demo_1',
-        customerName: 'أحمد علي العراقي',
-        customerPhone: '07712345678',
+        customerId: userProfile?.uid || `guest_${Date.now()}`,
+        customerName: finalCustomerName,
+        customerPhone: finalCustomerPhone,
         shopId: selectedShop.id,
         shopName: selectedShop.name,
         deviceType,
@@ -201,7 +336,17 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
     setQrModalData({ title, barcodeUrl, qrUrl });
   };
 
-  const filteredShops = shops.filter(
+  const uniqueShops = useMemo(() => {
+    const map = new Map<string, Shop>();
+    shops.forEach((shop) => {
+      if (shop && shop.id && !map.has(shop.id)) {
+        map.set(shop.id, shop);
+      }
+    });
+    return Array.from(map.values());
+  }, [shops]);
+
+  const filteredShops = uniqueShops.filter(
     (s) =>
       s.name.includes(searchQuery) ||
       s.city.includes(searchQuery) ||
@@ -216,7 +361,17 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
   );
 
   return (
-    <div className="space-y-8 pb-16">
+    <div className="space-y-8 pb-16 relative">
+      {/* Toast Notification Banner */}
+      {toastMsg && (
+        <div className="fixed top-6 left-1/2 -translate-x-1/2 z-50 bg-gradient-to-r from-slate-900 to-blue-950 text-white border-2 border-emerald-500/80 px-6 py-3.5 rounded-2xl shadow-2xl shadow-emerald-500/20 flex items-center gap-3 animate-bounce">
+          <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+          <span className="text-xs font-black">{toastMsg}</span>
+          <button onClick={() => setToastMsg('')} className="text-slate-400 hover:text-white mr-2">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       {/* Hero Banner Section */}
       <div className="relative rounded-3xl overflow-hidden bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 border border-slate-800 p-8 md:p-12 shadow-2xl">
         <div className="absolute -left-10 -top-10 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none"></div>
@@ -311,6 +466,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         {[
           { id: 'home', label: 'المحلات المعتمدة', icon: <Store className="w-4 h-4" /> },
           { id: 'marketplace', label: 'المتجر الإلكتروني', icon: <ShoppingBag className="w-4 h-4" /> },
+          { id: 'orders', label: 'طلبات الشراء', icon: <ShoppingBag className="w-4 h-4 text-emerald-400" />, badgeCount: myOrders.length },
+          { id: 'notifications', label: 'الإشعارات', icon: <Bell className="w-4 h-4 text-amber-400" />, badgeCount: unreadNotificationsCount, isWarning: true },
           { id: 'maintenance', label: 'تتبع الصيانة', icon: <Wrench className="w-4 h-4" /> },
           { id: 'invoices', label: 'فواتيري والطباعة', icon: <Receipt className="w-4 h-4" /> },
           { id: 'warranties', label: 'سجل الضمان', icon: <ShieldCheck className="w-4 h-4" /> },
@@ -319,7 +476,7 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           <button
             key={tab.id}
             onClick={() => handleTabChange(tab.id as any)}
-            className={`px-4 py-2.5 rounded-xl font-bold text-xs whitespace-nowrap transition-all flex items-center gap-2 ${
+            className={`px-4 py-2.5 rounded-xl font-bold text-xs whitespace-nowrap transition-all flex items-center gap-2 relative ${
               activeTab === tab.id
                 ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/25'
                 : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
@@ -327,6 +484,15 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
           >
             {tab.icon}
             <span>{tab.label}</span>
+            {tab.badgeCount !== undefined && tab.badgeCount > 0 && (
+              <span className={`px-1.5 py-0.5 text-[10px] rounded-full font-black min-w-[18px] text-center ${
+                tab.isWarning
+                  ? 'bg-red-500 text-white animate-pulse'
+                  : 'bg-slate-800 text-emerald-400 border border-slate-700'
+              }`}>
+                {tab.badgeCount}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -681,7 +847,10 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                         className="bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-2xl p-3 flex flex-col justify-between transition-all group shadow-lg"
                       >
                         <div>
-                          <div className="h-40 bg-slate-950 rounded-xl overflow-hidden mb-3 relative flex items-center justify-center p-2">
+                          <div
+                            onClick={() => setSelectedProductForModal(prod)}
+                            className="h-40 bg-slate-950 rounded-xl overflow-hidden mb-3 relative flex items-center justify-center p-2 cursor-pointer group-hover:border border-amber-500/30"
+                          >
                             <img
                               src={prod.images[0]}
                               alt={prod.name}
@@ -693,7 +862,10 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                           </div>
 
                           <div className="text-[10px] text-blue-400 font-semibold mb-1">{selectedMarketShop.name}</div>
-                          <h5 className="font-bold text-sm text-white line-clamp-2 mb-2 group-hover:text-blue-400 transition-colors">
+                          <h5
+                            onClick={() => setSelectedProductForModal(prod)}
+                            className="font-bold text-sm text-white line-clamp-2 mb-2 group-hover:text-amber-400 transition-colors cursor-pointer"
+                          >
                             {prod.name}
                           </h5>
                         </div>
@@ -711,13 +883,23 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             <span className="text-[10px] text-slate-400">الكمية: {prod.quantity}</span>
                           </div>
 
-                          <button
-                            onClick={() => onAddToCart(prod)}
-                            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2.5 rounded-xl text-xs transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
-                          >
-                            <ShoppingBag className="w-4 h-4" />
-                            <span>إضافة إلى السلة</span>
-                          </button>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              onClick={() => setSelectedProductForModal(prod)}
+                              className="bg-gradient-to-r from-amber-500/20 to-amber-600/20 hover:from-amber-500 hover:to-amber-600 text-amber-300 hover:text-slate-950 border border-amber-500/30 font-bold py-2 px-2 rounded-xl text-[11px] transition-all flex items-center justify-center gap-1 shadow-md"
+                            >
+                              <BookmarkCheck className="w-3.5 h-3.5" />
+                              <span>حجز المنتج</span>
+                            </button>
+
+                            <button
+                              onClick={() => onAddToCart(prod)}
+                              className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-2 rounded-xl text-[11px] transition-all flex items-center justify-center gap-1 shadow-lg shadow-blue-600/20"
+                            >
+                              <ShoppingBag className="w-3.5 h-3.5" />
+                              <span>إضافة بالسلة</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}
@@ -822,7 +1004,9 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             <div className="space-y-4">
               {maintenanceTickets.map((ticket) => {
                 const isPending = ticket.status === 'pending_owner_approval';
+                const isAwaitingApproval = ticket.status === 'awaiting_approval';
                 const isRejected = ticket.status === 'rejected';
+                const isApprovedAndActive = !isPending && !isAwaitingApproval && !isRejected;
 
                 return (
                   <div
@@ -830,6 +1014,8 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                     className={`bg-slate-900 border rounded-2xl p-5 shadow-lg space-y-3 ${
                       isPending
                         ? 'border-amber-500/50 bg-slate-900/90'
+                        : isAwaitingApproval
+                        ? 'border-blue-500/60 bg-slate-900/95 ring-2 ring-blue-500/30'
                         : isRejected
                         ? 'border-red-500/40 opacity-80'
                         : 'border-slate-800'
@@ -851,15 +1037,19 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                             </span>
                             {isPending ? (
                               <span className="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/40 px-3 py-0.5 rounded-full font-bold animate-pulse">
-                                ⏳ بانتظار موافقة صاحب المحل أولاً
+                                ⏳ بانتظار تحديد التكلفة من المحل
+                              </span>
+                            ) : isAwaitingApproval ? (
+                              <span className="text-xs bg-blue-500/20 text-blue-300 border border-blue-500/40 px-3 py-0.5 rounded-full font-bold animate-pulse">
+                                💰 تم تحديد التكلفة - بانتظار موافقتك
                               </span>
                             ) : isRejected ? (
                               <span className="text-xs bg-red-500/20 text-red-400 border border-red-500/40 px-3 py-0.5 rounded-full font-bold">
-                                🛑 تم رفض الطلب
+                                🛑 تم إلغاء / رفض الطلب
                               </span>
                             ) : (
                               <span className="text-xs bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 px-3 py-0.5 rounded-full font-bold">
-                                ✅ تمت موافقة المالك - قيد الصيانة
+                                ✅ تمت الموافقة - قيد الصيانة والمراحل
                               </span>
                             )}
                             <span className="text-xs text-slate-400">{new Date(ticket.createdAt).toLocaleDateString('ar-IQ')}</span>
@@ -882,13 +1072,13 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
 
                           {isPending && (
                             <div className="bg-amber-950/30 border border-amber-500/30 text-amber-300 text-xs p-2.5 rounded-xl mt-2">
-                              💡 تم إرسال طلبك بنجاح. سيقوم صاحب المحل بمراجعة الطلب والموافقة عليه أولاً، ثم ملء الخدمات المعتمدة والتكلفة النهائية.
+                              💡 تم تقديم طلبك بنجاح. سيقوم صاحب المحل بمراجعة الجهاز وتحديد التكلفة والخدمات المطلوبة وإرسال إشعار إليك للموافقة.
                             </div>
                           )}
 
                           {isRejected && (
                             <div className="bg-red-950/30 border border-red-500/30 text-red-300 text-xs p-2.5 rounded-xl mt-2">
-                              🛑 {ticket.rejectionReason || 'اعتذر صاحب المحل عن قبول الطلب لعدم توفر قطع الغيار أو إمكانية الصيانة حالياً.'}
+                              🛑 {ticket.rejectionReason || 'تم اعتذار عن الصيانة أو رفض عرض السعر.'}
                             </div>
                           )}
                         </div>
@@ -908,6 +1098,95 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
                         </button>
                       </div>
                     </div>
+
+                    {/* Customer Price & Services Approval Box */}
+                    {isAwaitingApproval && (
+                      <div className="bg-gradient-to-br from-slate-950 via-blue-950/50 to-slate-950 border-2 border-blue-500/50 p-4 rounded-2xl space-y-3 mt-3 shadow-xl shadow-blue-950/30">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-blue-500/20 pb-2.5">
+                          <div className="flex items-center gap-2">
+                            <DollarSign className="w-5 h-5 text-emerald-400 shrink-0" />
+                            <span className="font-black text-xs text-white">عرض سعر وتكلفة الصيانة من صاحب المحل</span>
+                          </div>
+                          <span className="bg-blue-500/20 text-blue-300 font-bold px-3 py-1 rounded-full text-[11px] border border-blue-500/30">
+                            مطلوب موافقتك للبدء بالعمل
+                          </span>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                          <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                            <span className="text-slate-400 text-[11px] block mb-0.5">التكلفة الكلية المحددة:</span>
+                            <span className="text-xl font-black text-emerald-400">{formatIQD(ticket.estimatedCostIQD)}</span>
+                          </div>
+
+                          {ticket.technicianNote && (
+                            <div className="bg-slate-900/90 p-3 rounded-xl border border-slate-800">
+                              <span className="text-amber-300 text-[11px] font-bold block mb-0.5">ملاحظة الفني / المحل:</span>
+                              <span className="text-slate-300 text-[11px] leading-snug">{ticket.technicianNote}</span>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2.5 pt-1">
+                          <button
+                            onClick={() => handleCustomerApproveQuote(ticket)}
+                            className="flex-1 bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-black text-xs py-3 px-4 rounded-xl shadow-lg shadow-emerald-600/25 flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            <span>الموافقة على السعر والبدء بالصيانة</span>
+                          </button>
+
+                          <button
+                            onClick={() => handleCustomerRejectQuote(ticket)}
+                            className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-xs py-3 px-4 rounded-xl flex items-center justify-center gap-2 transition-all cursor-pointer"
+                          >
+                            <XCircle className="w-4 h-4" />
+                            <span>رفض السعر وإلغاء الطلب</span>
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Progress Bar & Repair Stages - Displayed ONLY After Customer Approval */}
+                    {isApprovedAndActive && (
+                      <div className="pt-3 border-t border-slate-800/80 space-y-3">
+                        <div>
+                          <div className="flex justify-between items-center text-xs mb-1.5">
+                            <span className="text-slate-300 font-bold">نسبة تقدم الإصلاح:</span>
+                            <span className="text-cyan-400 font-black">{ticket.progressPercent}%</span>
+                          </div>
+                          <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-800">
+                            <div
+                              className="bg-gradient-to-r from-blue-500 to-cyan-400 h-full transition-all duration-500 rounded-full shadow-sm shadow-cyan-500/50"
+                              style={{ width: `${ticket.progressPercent}%` }}
+                            />
+                          </div>
+                        </div>
+
+                        {ticket.stages && ticket.stages.length > 0 && (
+                          <div className="space-y-1.5">
+                            <h5 className="text-xs font-bold text-slate-300">مراحل الصيانة:</h5>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 text-xs">
+                              {ticket.stages.map((stage, idx) => (
+                                <div
+                                  key={idx}
+                                  className={`p-2.5 rounded-xl border ${
+                                    stage.completed
+                                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                                      : 'bg-slate-950 border-slate-800 text-slate-500'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2 font-bold mb-1">
+                                    <CheckCircle2 className={`w-4 h-4 ${stage.completed ? 'text-emerald-400' : 'text-slate-600'}`} />
+                                    <span className="text-xs">{stage.title}</span>
+                                  </div>
+                                  <span className="text-[10px] block opacity-80">{stage.completed ? (stage.date || 'الآن') : '-'}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1019,6 +1298,321 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
         </div>
       )}
 
+      {/* TAB: CUSTOMER PRODUCT ORDERS */}
+      {activeTab === 'orders' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h3 className="text-xl font-black text-white">طلبات الشراء الخاصة بي</h3>
+              <p className="text-xs text-slate-400">تتبع حالة طلباتك ومشترياتك من قطع الغيار أو الهواتف مباشرة.</p>
+            </div>
+            <span className="text-xs bg-slate-900 border border-slate-800 text-slate-300 font-bold px-3 py-1.5 rounded-xl">
+              إجمالي الطلبات: {myOrders.length}
+            </span>
+          </div>
+
+          {myOrders.length === 0 ? (
+            <div className="text-center py-16 bg-slate-900 border border-slate-800 rounded-2xl">
+              <ShoppingBag className="w-14 h-14 text-slate-700 mx-auto mb-4" />
+              <h4 className="text-slate-300 font-bold text-sm">لم تقم بأي طلب شراء بعد</h4>
+              <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+                تصفح منتجات المحلات في المتجر الإلكتروني وأضفها إلى السلة لطلب القطع وتوصيلها لعنوانك.
+              </p>
+              <button
+                onClick={() => handleTabChange('marketplace')}
+                className="mt-4 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-5 rounded-xl text-xs transition-all shadow-md"
+              >
+                الذهاب للمتجر الآن
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-4">
+              {myOrders.map((order) => {
+                const statusInfo = {
+                  pending: { label: 'بانتظار الموافقة', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
+                  approved: { label: 'تمت الموافقة', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
+                  preparing: { label: 'قيد التجهيز', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20' },
+                  shipped: { label: 'تم الشحن', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                  delivered: { label: 'تم التسليم بنجاح', color: 'bg-teal-500/10 text-teal-500 border-teal-500/20' },
+                  rejected: { label: 'طلب مرفوض', color: 'bg-red-500/10 text-red-500 border-red-500/20' }
+                }[order.status];
+
+                // Stepper progress state
+                const statusesOrdered: ProductOrderStatus[] = ['pending', 'approved', 'preparing', 'shipped', 'delivered'];
+                const currentIdx = statusesOrdered.indexOf(order.status);
+                const isRejected = order.status === 'rejected';
+
+                return (
+                  <div key={order.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                    {/* Header */}
+                    <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex flex-wrap justify-between items-center gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <span className="text-white font-black text-xs md:text-sm">{order.orderNumber}</span>
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {new Date(order.createdAt).toLocaleString('ar-IQ')}
+                        </span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusInfo.color}`}>
+                          {statusInfo.label}
+                        </span>
+                        {order.isReservation && (
+                          <span className="text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <BookmarkCheck className="w-3 h-3 text-amber-400" />
+                            <span>حجز مباشر من المحل</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-emerald-400 font-black text-sm">
+                        {formatIQD(order.totalIQD)}
+                      </div>
+                    </div>
+
+                    {/* Stepper Progress */}
+                    {!isRejected && (
+                      <div className="p-4 bg-slate-950/20 border-b border-slate-800/40">
+                        <div className="flex items-center justify-between max-w-lg mx-auto relative px-2">
+                          {/* Progress bar line */}
+                          <div className="absolute top-1/2 left-4 right-4 h-0.5 bg-slate-800 -translate-y-1/2 -z-10">
+                            <div
+                              className="h-full bg-emerald-500 transition-all duration-500"
+                              style={{ width: `${(Math.max(0, currentIdx) / (statusesOrdered.length - 1)) * 100}%` }}
+                            />
+                          </div>
+
+                          {statusesOrdered.map((st, sIdx) => {
+                            const isCompleted = sIdx <= currentIdx;
+                            const isActive = sIdx === currentIdx;
+                            const labelMap = {
+                              pending: 'طلب جديد',
+                              approved: 'مقبول',
+                              preparing: 'تجهيز',
+                              shipped: 'شحن',
+                              delivered: 'تسليم'
+                            };
+
+                            return (
+                              <div key={st} className="flex flex-col items-center">
+                                <div
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-black border transition-all ${
+                                    isCompleted
+                                      ? 'bg-emerald-500 border-emerald-500 text-slate-950'
+                                      : 'bg-slate-900 border-slate-800 text-slate-500'
+                                  } ${isActive ? 'ring-4 ring-emerald-500/20 font-black scale-110' : ''}`}
+                                >
+                                  {isCompleted ? '✓' : sIdx + 1}
+                                </div>
+                                <span className={`text-[9px] mt-1.5 font-bold ${isCompleted ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                  {labelMap[st]}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Order Details Body */}
+                    <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                      <div>
+                        <h4 className="font-bold text-slate-400 mb-2">القطع والمنتجات</h4>
+                        <div className="space-y-2">
+                          {order.items.map((item, idx) => (
+                            <div key={idx} className="flex items-center gap-3 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                              {item.image && (
+                                <img src={item.image} alt={item.productName} className="w-10 h-10 object-contain bg-slate-900 rounded-lg" />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-bold text-slate-200 truncate">{item.productName}</div>
+                                <div className="text-[10px] text-slate-400">
+                                  {item.quantity} × {formatIQD(item.priceIQD)}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 md:border-r md:border-slate-800/60 md:pr-4">
+                        <div>
+                          <h4 className="font-bold text-slate-400 mb-1">بيانات التوصيل والدفع</h4>
+                          <div className="space-y-1 text-slate-300">
+                            <div><span className="text-slate-500 font-bold">مستلم الشحنة:</span> {order.customerName}</div>
+                            <div><span className="text-slate-500 font-bold">رقم الهاتف:</span> <span className="font-mono">{order.customerPhone}</span></div>
+                            <div><span className="text-slate-500 font-bold">عنوان التوصيل:</span> {order.customerAddress}</div>
+                            <div>
+                              <span className="text-slate-500 font-bold">طريقة الدفع:</span>{' '}
+                              <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded">
+                                {order.paymentMethod === 'cash' ? 'نقداً عند الاستلام' : 'زين كاش'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Appointment Date & Time Banner */}
+                        {(order.deliveryDate || order.deliveryTime) && (
+                          <div className="bg-blue-500/10 border border-blue-500/30 text-blue-200 p-3 rounded-xl flex items-start gap-2.5">
+                            <Calendar className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                            <div className="text-xs space-y-0.5">
+                              <div className="font-bold text-white">موعد وساعة استلام الحجز من مقر المحل:</div>
+                              <div className="font-bold text-emerald-400">
+                                {order.deliveryDate || 'اليوم المحدد'} {order.deliveryTime ? `— الساعة ${order.deliveryTime}` : ''}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Owner message notifications / notes */}
+                        {(order.ownerNotes || isRejected) && (
+                          <div className={`p-3 rounded-xl border ${isRejected ? 'bg-red-500/5 border-red-500/20 text-red-400' : 'bg-emerald-500/5 border-emerald-500/20 text-emerald-400'}`}>
+                            <span className="font-bold block mb-1 text-[11px]">
+                              {isRejected ? 'رسالة الرفض وتوضيح صاحب المحل:' : 'رسالة وملاحظات صاحب المحل:'}
+                            </span>
+                            <p className="text-slate-300 leading-relaxed text-xs">{order.ownerNotes || 'لم يترك صاحب المحل أي ملاحظات.'}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB: NOTIFICATION CENTER */}
+      {activeTab === 'notifications' && (
+        <div className="space-y-4">
+          <div className="flex justify-between items-center pb-2 border-b border-slate-800">
+            <div>
+              <h3 className="text-xl font-black text-white">مركز الإشعارات</h3>
+              <p className="text-xs text-slate-400">تحديثات فورية لطلبات الصيانة والمشتريات والخصومات الجديدة.</p>
+            </div>
+            {unreadNotificationsCount > 0 && (
+              <button
+                onClick={handleMarkAllNotificationsRead}
+                className="text-xs text-blue-400 hover:text-blue-300 font-bold bg-blue-500/10 px-3 py-1.5 rounded-xl transition-all"
+              >
+                تحديد الكل كمقروء
+              </button>
+            )}
+          </div>
+
+          {myNotifications.length === 0 ? (
+            <div className="text-center py-16 bg-slate-900 border border-slate-800 rounded-2xl">
+              <Bell className="w-14 h-14 text-slate-700 mx-auto mb-4" />
+              <h4 className="text-slate-300 font-bold text-sm">صندوق الإشعارات فارغ</h4>
+              <p className="text-xs text-slate-500 mt-1 max-w-xs mx-auto">
+                عند حدوث أي تحديث على طلبات صيانة أجهزتك، أو موافقة صاحب المحل على مبيعاتك، ستتلقى إشعاراً فورياً هنا.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {myNotifications.map((notif) => {
+                const isUnread = !notif.read;
+                let categoryLabel = 'عام';
+                let categoryColor = 'bg-slate-800 text-slate-300 border-slate-700';
+
+                if (notif.category === 'maintenance') {
+                  categoryLabel = 'صيانة أجهزة';
+                  categoryColor = 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20';
+                } else if (notif.category === 'order') {
+                  categoryLabel = 'طلب شراء منتج';
+                  categoryColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                } else if (notif.category === 'offer') {
+                  categoryLabel = 'عروض وخصومات';
+                  categoryColor = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+                }
+
+                // Handle click on notification
+                const handleNotificationClick = () => {
+                  if (isUnread) {
+                    handleMarkNotificationRead(notif.id);
+                  }
+                  // Switch to relevant tab
+                  if (notif.category === 'maintenance') {
+                    handleTabChange('maintenance');
+                  } else if (notif.category === 'order') {
+                    handleTabChange('orders');
+                  } else if (notif.category === 'offer') {
+                    handleTabChange('offers');
+                  }
+                };
+
+                return (
+                  <div
+                    key={notif.id}
+                    onClick={handleNotificationClick}
+                    className={`p-4 rounded-2xl border transition-all cursor-pointer relative overflow-hidden flex gap-4 ${
+                      isUnread
+                        ? 'bg-slate-900 border-blue-500/30 hover:border-blue-500/50 shadow-md shadow-blue-500/5'
+                        : 'bg-slate-900/60 border-slate-800/80 hover:border-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {/* Unread dot indicator */}
+                    {isUnread && (
+                      <span className="absolute top-4 right-4 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    )}
+
+                    {/* Category Icon */}
+                    <div className="flex-shrink-0 mt-1">
+                      <div className={`w-9 h-9 rounded-xl flex items-center justify-center border ${
+                        notif.category === 'maintenance'
+                          ? 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'
+                          : notif.category === 'order'
+                          ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                          : 'bg-rose-500/10 border-rose-500/20 text-rose-400'
+                      }`}>
+                        <Bell className="w-4 h-4" />
+                      </div>
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0 pr-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${categoryColor}`}>
+                          {categoryLabel}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-medium">
+                          {new Date(notif.createdAt).toLocaleString('ar-IQ')}
+                        </span>
+                      </div>
+                      <h4 className={`text-xs font-black ${isUnread ? 'text-white' : 'text-slate-300'}`}>
+                        {notif.title}
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                        {notif.message}
+                      </p>
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex flex-col justify-between items-end gap-2">
+                      <button
+                        onClick={(e) => handleDeleteNotification(notif.id, e)}
+                        className="p-1.5 hover:bg-slate-800 text-slate-500 hover:text-red-400 rounded-lg transition-all"
+                        title="حذف الإشعار"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                      {isUnread && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleMarkNotificationRead(notif.id);
+                          }}
+                          className="text-[9px] text-blue-400 hover:underline font-bold"
+                        >
+                          تحديد كمقروء
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* New Maintenance Request Modal */}
       {showNewTicketModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1040,6 +1634,32 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             )}
 
             <form onSubmit={handleCreateMaintenanceTicket} className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">اسم الزبون الكامل</label>
+                  <input
+                    type="text"
+                    required
+                    value={cCustomerName}
+                    onChange={(e) => setCCustomerName(e.target.value)}
+                    placeholder="أدخل اسمك الثلاثي"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-slate-300 font-bold mb-1">رقم الهاتف للتواصل</label>
+                  <input
+                    type="text"
+                    required
+                    value={cCustomerPhone}
+                    onChange={(e) => setCCustomerPhone(e.target.value)}
+                    placeholder="07700000000"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-slate-200 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
               <div>
                 <label className="block text-slate-300 font-bold mb-1">اختر مركز الصيانة المطلوب</label>
                 <select
@@ -1176,6 +1796,18 @@ export const CustomerDashboard: React.FC<CustomerDashboardProps> = ({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Product Detail Modal */}
+      {selectedProductForModal && (
+        <ProductDetailModal
+          product={selectedProductForModal}
+          shopPhone={selectedMarketShop?.phone || '07700000000'}
+          shopName={selectedMarketShop?.name || selectedProductForModal.shopName}
+          onClose={() => setSelectedProductForModal(null)}
+          onAddToCart={(p, q) => onAddToCart(p, q)}
+          userProfile={userProfile}
+        />
       )}
     </div>
   );

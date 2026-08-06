@@ -1,7 +1,9 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Trash2, ShoppingBag, ArrowRight, CheckCircle2 } from 'lucide-react';
-import { Product } from '../../types';
+import { Product, ProductOrder } from '../../types';
 import { formatIQD } from '../../utils/pdfGenerator';
+import { useAuth } from '../../context/AuthContext';
+import { MockDataService } from '../../services/MockDataService';
 
 export interface CartItem {
   product: Product;
@@ -25,11 +27,30 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
   onRemoveItem,
   onClearCart,
 }) => {
+  const { userProfile } = useAuth();
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
   const [address, setAddress] = useState('');
+  const [customerNotes, setCustomerNotes] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'zain_cash'>('cash');
   const [orderSuccess, setOrderSuccess] = useState(false);
+  const [checkoutError, setCheckoutError] = useState('');
+
+  // Autofill from user profile when drawer opens
+  useEffect(() => {
+    if (userProfile && isOpen) {
+      if (userProfile.displayName && !customerName) {
+        setCustomerName(userProfile.displayName);
+      }
+      if (userProfile.phoneNumber && !customerPhone) {
+        setCustomerPhone(userProfile.phoneNumber);
+      }
+    }
+    // Clear error on open
+    if (isOpen) {
+      setCheckoutError('');
+    }
+  }, [userProfile, isOpen]);
 
   if (!isOpen) return null;
 
@@ -37,13 +58,66 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
 
   const handleCheckout = (e: React.FormEvent) => {
     e.preventDefault();
+    setCheckoutError('');
+
+    if (!customerName.trim() || !customerPhone.trim() || !address.trim()) {
+      setCheckoutError('يرجى ملء كافة الحقول الإلزامية المطلوبة (الاسم الكامل، رقم الهاتف، العنوان التفصيلي).');
+      return;
+    }
+
+    // Group cart items by shopId so we can create an order for each shop
+    const itemsByShop: Record<string, CartItem[]> = {};
+    cartItems.forEach((item) => {
+      const sId = item.product.shopId || 'unknown_shop';
+      if (!itemsByShop[sId]) {
+        itemsByShop[sId] = [];
+      }
+      itemsByShop[sId].push(item);
+    });
+
+    // Create order for each shop
+    Object.entries(itemsByShop).forEach(([shopId, items]) => {
+      const firstItem = items[0];
+      const shopName = firstItem.product.shopName || 'متجر الشريك';
+      const orderNumber = `ORD-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+
+      const newOrder: ProductOrder = {
+        id: `order_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        orderNumber,
+        shopId,
+        shopName,
+        customerId: userProfile?.uid || `guest_${Date.now()}`,
+        customerName: customerName.trim(),
+        customerPhone: customerPhone.trim(),
+        customerAddress: address.trim(),
+        customerNotes: customerNotes.trim() || undefined,
+        items: items.map((it) => ({
+          productId: it.product.id,
+          productName: it.product.name,
+          priceIQD: it.product.priceIQD,
+          quantity: it.quantity,
+          image: it.product.images[0],
+        })),
+        totalIQD: items.reduce((sum, it) => sum + it.product.priceIQD * it.quantity, 0),
+        status: 'pending',
+        paymentMethod,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      MockDataService.addProductOrder(newOrder);
+    });
+
     setOrderSuccess(true);
     setTimeout(() => {
       onClearCart();
       setOrderSuccess(false);
+      setAddress('');
+      setCustomerNotes('');
       onClose();
     }, 2500);
   };
+
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex justify-end">
@@ -120,6 +194,11 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
               {/* Checkout Form */}
               <form onSubmit={handleCheckout} className="pt-4 border-t border-slate-800 space-y-3 text-xs">
                 <h4 className="font-bold text-slate-200">معلومات التوصيل</h4>
+                {checkoutError && (
+                  <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-2.5 rounded-xl font-bold text-center">
+                    {checkoutError}
+                  </div>
+                )}
                 <input
                   type="text"
                   required
@@ -143,6 +222,12 @@ export const CartDrawer: React.FC<CartDrawerProps> = ({
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                />
+                <textarea
+                  placeholder="ملاحظات إضافية (اختياري) - مثل تفاصيل الشحن أو مواعيد الاستلام"
+                  value={customerNotes}
+                  onChange={(e) => setCustomerNotes(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white h-20 resize-none"
                 />
 
                 <div className="pt-2">

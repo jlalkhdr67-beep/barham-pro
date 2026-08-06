@@ -34,7 +34,44 @@ function AppContent() {
   const [selectedShop, setSelectedShop] = useState<Shop | null>(null);
 
   // Cart Items State
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [cartItems, setCartItems] = React.useState<CartItem[]>([]);
+  const isLoadedRef = React.useRef(false);
+
+  // Load cart on mount or when user profile resolves
+  React.useEffect(() => {
+    try {
+      const uid = userProfile?.uid || 'guest';
+      const saved = localStorage.getItem(`barham_cart_items_${uid}`);
+      if (saved) {
+        setCartItems(JSON.parse(saved));
+      } else {
+        // Fallback to legacy global cart if exists
+        const legacy = localStorage.getItem('barham_cart_items');
+        if (legacy && uid !== 'guest') {
+          setCartItems(JSON.parse(legacy));
+          // Migrate legacy
+          localStorage.setItem(`barham_cart_items_${uid}`, legacy);
+        } else {
+          setCartItems([]);
+        }
+      }
+      isLoadedRef.current = true;
+    } catch (e) {
+      setCartItems([]);
+      isLoadedRef.current = true;
+    }
+  }, [userProfile?.uid]);
+
+  // Sync Cart Items to LocalStorage on change
+  React.useEffect(() => {
+    if (!isLoadedRef.current) return;
+    try {
+      const uid = userProfile?.uid || 'guest';
+      localStorage.setItem(`barham_cart_items_${uid}`, JSON.stringify(cartItems));
+    } catch (e) {
+      console.warn('Error saving cart to localStorage:', e);
+    }
+  }, [cartItems, userProfile?.uid]);
 
   const handleOpenAuth = (mode: 'login' | 'register' | 'phone' | 'forgot' = 'login') => {
     setAuthModalInitialMode(mode);

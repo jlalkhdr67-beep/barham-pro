@@ -10,7 +10,10 @@ import {
   Warranty,
   Staff,
   ShopReview,
-  AppNotification
+  AppNotification,
+  ProductOrder,
+  ProductOrderStatus,
+  Branch
 } from '../types';
 
 import { deleteAllNonOwnerUsersFromFirestore } from './firebase/firestore';
@@ -27,7 +30,8 @@ const STORAGE_KEYS = {
   WARRANTIES: 'barham_mock_warranties',
   STAFF: 'barham_mock_staff',
   REVIEWS: 'barham_mock_reviews',
-  NOTIFICATIONS: 'barham_mock_notifications'
+  NOTIFICATIONS: 'barham_mock_notifications',
+  PRODUCT_ORDERS: 'barham_mock_product_orders'
 };
 
 // Storage Version to force reset when system demo data is wiped
@@ -185,6 +189,74 @@ export class MockDataService {
   static deleteShop(id: string): void {
     const shops = this.getShops().filter((s) => s.id !== id);
     this.saveShops(shops);
+  }
+
+  // Branches helper methods
+  static addShopBranch(
+    shopId: string,
+    branch: Omit<Branch, 'id' | 'shopId' | 'status'>
+  ): Branch {
+    const shops = this.getShops();
+    const index = shops.findIndex((s) => s.id === shopId);
+    const newBranch: Branch = {
+      ...branch,
+      id: 'brch-' + Math.random().toString(36).substr(2, 9),
+      shopId,
+      status: 'approved'
+    };
+
+    if (index >= 0) {
+      if (!shops[index].branches) {
+        shops[index].branches = [];
+      }
+      if (newBranch.isMain) {
+        shops[index].branches.forEach((b) => (b.isMain = false));
+      } else if (shops[index].branches.length === 0) {
+        newBranch.isMain = true;
+      }
+      shops[index].branches.push(newBranch);
+      this.saveShops(shops);
+    }
+    return newBranch;
+  }
+
+  static updateShopBranch(shopId: string, branchId: string, updates: Partial<Branch>): void {
+    const shops = this.getShops();
+    const index = shops.findIndex((s) => s.id === shopId);
+    if (index >= 0 && shops[index].branches) {
+      const bIdx = shops[index].branches.findIndex((b) => b.id === branchId);
+      if (bIdx >= 0) {
+        if (updates.isMain) {
+          shops[index].branches.forEach((b) => (b.isMain = false));
+        }
+        shops[index].branches[bIdx] = { ...shops[index].branches[bIdx], ...updates };
+        this.saveShops(shops);
+      }
+    }
+  }
+
+  static deleteShopBranch(shopId: string, branchId: string): void {
+    const shops = this.getShops();
+    const index = shops.findIndex((s) => s.id === shopId);
+    if (index >= 0 && shops[index].branches) {
+      const wasMain = shops[index].branches.find((b) => b.id === branchId)?.isMain;
+      shops[index].branches = shops[index].branches.filter((b) => b.id !== branchId);
+      if (wasMain && shops[index].branches.length > 0) {
+        shops[index].branches[0].isMain = true;
+      }
+      this.saveShops(shops);
+    }
+  }
+
+  static setMainBranch(shopId: string, branchId: string): void {
+    const shops = this.getShops();
+    const index = shops.findIndex((s) => s.id === shopId);
+    if (index >= 0 && shops[index].branches) {
+      shops[index].branches.forEach((b) => {
+        b.isMain = b.id === branchId;
+      });
+      this.saveShops(shops);
+    }
   }
 
   // Shop Requests
@@ -392,6 +464,10 @@ export class MockDataService {
     this.saveInvoices(list);
   }
 
+  static clearInvoices(): void {
+    this.saveInvoices([]);
+  }
+
   // Offers
   static getOffers(): Offer[] {
     return loadCollection<Offer>(STORAGE_KEYS.OFFERS, INITIAL_OFFERS);
@@ -507,6 +583,112 @@ export class MockDataService {
   static deleteNotification(id: string): void {
     const list = this.getNotifications().filter((n) => n.id !== id);
     this.saveNotifications(list);
+  }
+
+  // Product Orders
+  static getProductOrders(): ProductOrder[] {
+    return loadCollection<ProductOrder>(STORAGE_KEYS.PRODUCT_ORDERS, []);
+  }
+
+  static saveProductOrders(orders: ProductOrder[]): void {
+    saveCollection(STORAGE_KEYS.PRODUCT_ORDERS, orders);
+  }
+
+  static getProductOrdersByShop(shopId: string): ProductOrder[] {
+    return this.getProductOrders().filter((o) => o.shopId === shopId);
+  }
+
+  static getProductOrdersByCustomer(customerId: string): ProductOrder[] {
+    return this.getProductOrders().filter((o) => o.customerId === customerId);
+  }
+
+  static addProductOrder(order: ProductOrder): ProductOrder {
+    const list = this.getProductOrders();
+    list.unshift(order);
+    this.saveProductOrders(list);
+
+    // Notify Shop Owner about new order/reservation
+    const isRes = order.isReservation;
+    this.addNotification({
+      userId: order.shopId,
+      title: isRes ? 'طلب حجز منتج جديد 📌' : 'طلب شراء جديد قيد الانتظار 📦',
+      message: isRes
+        ? `استلمت طلب حجز جديد للمنتج (${order.items.map(i => i.productName).join('، ')}) برقم ${order.orderNumber} من الزبون ${order.customerName} (الهاتف: ${order.customerPhone}). يرجى المراجعة والموافقة وتحديد موعد التسليم.`
+        : `استلمت طلباً جديداً برقم ${order.orderNumber} من الزبون ${order.customerName} بقيمة ${order.totalIQD.toLocaleString()} د.ع. يرجى مراجعته وقبوله أو رفضه.`,
+      type: 'info',
+      read: false,
+      category: 'order'
+    });
+
+    return order;
+  }
+
+  static updateProductOrderStatus(
+    orderId: string,
+    status: ProductOrderStatus,
+    ownerNotes?: string,
+    deliveryDate?: string,
+    deliveryTime?: string
+  ): void {
+    const list = this.getProductOrders();
+    const idx = list.findIndex((o) => o.id === orderId);
+    if (idx >= 0) {
+      const order = list[idx];
+      order.status = status;
+      if (ownerNotes !== undefined) {
+        order.ownerNotes = ownerNotes;
+      }
+      if (deliveryDate) {
+        order.deliveryDate = deliveryDate;
+      }
+      if (deliveryTime) {
+        order.deliveryTime = deliveryTime;
+      }
+      order.updatedAt = new Date().toISOString();
+      this.saveProductOrders(list);
+
+      // Status labels translation
+      const statusLabels: Record<ProductOrderStatus, string> = {
+        pending: 'بانتظار الموافقة',
+        approved: 'تمت الموافقة والحجز',
+        preparing: 'قيد التجهيز',
+        shipped: 'جاهز للاستلام من المحل',
+        delivered: 'تم التسليم من المحل',
+        rejected: 'مرفوض'
+      };
+
+      // Notify customer instantly
+      let title = `تحديث على طلبك #${order.orderNumber} 📦`;
+      let message = `تم تغيير حالة طلبك إلى: (${statusLabels[status]}).`;
+
+      const prodNames = order.items.map((i) => i.productName).join('، ');
+
+      if (status === 'approved') {
+        title = `تمت الموافقة على حجز المنتج! 🎉`;
+        const dDate = deliveryDate || order.deliveryDate || 'في اليوم المحدد';
+        const dTime = deliveryTime || order.deliveryTime || 'خلال أوقات العمل الرسمية';
+        message = `تمت الموافقة على طلب حجز المنتج (${prodNames}) من محل (${order.shopName}).\n\n• موعد وساعة التسليم: ${dDate} - الساعة: ${dTime}\n• مكان التسليم والاستلام: من مقر المحل مباشرة\n• ملاحظات المحل: ${ownerNotes || 'بانتظار زيارتك للمحل لاستلام المنتج.'}`;
+      } else if (status === 'rejected') {
+        title = `اعتذار عن حجز / طلب المنتج ❌`;
+        message = `عذراً، تعذر قبول طلب حجز المنتج (${prodNames}) في محل (${order.shopName}).\n\nسبب الاعتذار / الملاحظة: ${ownerNotes || 'عدم توفر الكمية المطلوبة حالياً.'}`;
+      } else {
+        if (order.deliveryDate || order.deliveryTime) {
+          message += `\n• موعد وساعة الاستلام: ${order.deliveryDate || ''} ${order.deliveryTime ? `الساعة ${order.deliveryTime}` : ''}`;
+        }
+        if (ownerNotes) {
+          message += `\n• ملاحظات المحل: ${ownerNotes}`;
+        }
+      }
+
+      this.addNotification({
+        userId: order.customerId,
+        title,
+        message,
+        type: status === 'rejected' ? 'warning' : 'success',
+        read: false,
+        category: 'order'
+      });
+    }
   }
 
   // Full Reset

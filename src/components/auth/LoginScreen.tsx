@@ -199,7 +199,7 @@ export const LoginScreen: React.FC = () => {
     try {
       const targetRole: UserRole = registerType === 'owner' ? 'owner' : 'customer';
       await confirmPhoneOtp(confirmationResult, otpCode, targetRole);
-      setMessage('تم التحقق وتأكيد تسجيل الدخول بنجاح عبر Firebase Auth!');
+      setMessage('تم التحقق وتأكيد تسجيل الدخول بنجاح!');
     } catch (err: any) {
       setError(getFirebaseErrorMessage(err));
     } finally {
@@ -227,7 +227,7 @@ export const LoginScreen: React.FC = () => {
           </div>
           <h1 className="text-2xl sm:text-3xl font-black text-white tracking-wide">Barham Pro</h1>
           <p className="text-xs text-blue-400 font-bold mt-1">
-            منصة صيانة الهواتف والمحلات الأولى في العراق (Firebase Auth)
+            منصة صيانة الهواتف والمحلات الأولى في العراق
           </p>
         </div>
 
@@ -374,7 +374,7 @@ export const LoginScreen: React.FC = () => {
                       required
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="أحمد علي العراقي"
+                      placeholder="الاسم الكامل"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 pr-11 pl-4 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                     <User className="w-4 h-4 text-slate-500 absolute right-4 top-3.5" />

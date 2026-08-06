@@ -244,4 +244,38 @@ export interface AppNotification {
   type: 'info' | 'success' | 'warning' | 'maintenance' | 'offer';
   read: boolean;
   createdAt: string;
+  category?: 'general' | 'maintenance' | 'order' | 'offer';
 }
+
+export type ProductOrderStatus = 'pending' | 'approved' | 'preparing' | 'shipped' | 'delivered' | 'rejected';
+
+export interface ProductOrderItem {
+  productId: string;
+  productName: string;
+  priceIQD: number;
+  quantity: number;
+  image?: string;
+}
+
+export interface ProductOrder {
+  id: string;
+  orderNumber: string;
+  shopId: string;
+  shopName: string;
+  customerId: string;
+  customerName: string;
+  customerPhone: string;
+  customerAddress: string;
+  customerNotes?: string;
+  items: ProductOrderItem[];
+  totalIQD: number;
+  status: ProductOrderStatus;
+  paymentMethod: 'cash' | 'zain_cash';
+  createdAt: string;
+  updatedAt: string;
+  ownerNotes?: string;
+  deliveryDate?: string;
+  deliveryTime?: string;
+  isReservation?: boolean;
+}
+

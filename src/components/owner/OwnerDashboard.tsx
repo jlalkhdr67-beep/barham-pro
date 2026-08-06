@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   Store,
   Package,
@@ -28,11 +28,13 @@ import {
   Check,
   Sparkles,
   Tag,
-  RefreshCw
+  RefreshCw,
+  XCircle,
+  ShoppingBag
 } from 'lucide-react';
 import { MockDataService } from '../../services/MockDataService';
 import { useAuth } from '../../context/AuthContext';
-import { Product, MaintenanceTicket, Invoice, Branch, Staff, MaintenanceStatus, Shop, Offer } from '../../types';
+import { Product, MaintenanceTicket, MaintenanceStage, Invoice, Branch, Staff, MaintenanceStatus, Shop, Offer, ProductOrder, ProductOrderStatus } from '../../types';
 import { UserProfileModal } from '../common/UserProfileModal';
 import { formatIQD, printInvoicePDF, printThermalReceipt88mm, printThermalReceipt44mm } from '../../utils/pdfGenerator';
 import { generateBarcodeDataUrl, generateQRCodeDataUrl } from '../../utils/barcodeUtils';
@@ -74,6 +76,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const [staffList, setStaffList] = useState<Staff[]>([]);
   const [offersList, setOffersList] = useState<Offer[]>([]);
   const [loading, setLoading] = useState(true);
+  const [checkingStatus, setCheckingStatus] = useState(false);
+  const [statusMessage, setStatusMessage] = useState('');
 
   // Offer Modal State
   const [showOfferModal, setShowOfferModal] = useState(false);
@@ -103,9 +107,72 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const [technicianNote, setTechnicianNote] = useState('');
   const [ticketSelectedServices, setTicketSelectedServices] = useState<string[]>([]);
   const [customServiceInput, setCustomServiceInput] = useState<string>('');
+  const [ticketStages, setTicketStages] = useState<MaintenanceStage[]>([]);
+
+  // Standard maintenance stages definition
+  const DEFAULT_MAINTENANCE_STAGES: { status: MaintenanceStatus; title: string }[] = useMemo(() => [
+    { status: 'pending_owner_approval', title: 'تم إرسال الطلب - بانتظار موافقة صاحب المحل' },
+    { status: 'received', title: 'تمت موافقة المالك واستلام الطلب' },
+    { status: 'inspecting', title: 'قيد الفحص وتحديد الخدمات والتكلفة' },
+    { status: 'repairing', title: 'قيد الإصلاح وتبديل القطع' },
+    { status: 'ready', title: 'جاهز للتسليم' },
+    { status: 'delivered', title: 'تم التسليم بنجاح' }
+  ], []);
+
+  const getOrInitializeTicketStages = (ticket: MaintenanceTicket): MaintenanceStage[] => {
+    if (ticket.stages && ticket.stages.length >= 5) {
+      return ticket.stages;
+    }
+    return DEFAULT_MAINTENANCE_STAGES.map((def, idx) => {
+      const existing = ticket.stages?.find(s => s.status === def.status);
+      if (existing) return existing;
+
+      const isCompleted = ticket.status === def.status || (
+        ticket.status === 'delivered' ? true :
+        ticket.status === 'ready' ? idx <= 4 :
+        ticket.status === 'repairing' ? idx <= 3 :
+        ticket.status === 'inspecting' ? idx <= 2 :
+        ticket.status === 'received' ? idx <= 1 :
+        idx === 0
+      );
+
+      return {
+        status: def.status,
+        title: def.title,
+        date: isCompleted ? 'الآن' : '-',
+        completed: isCompleted
+      };
+    });
+  };
+
+  const handleToggleStage = (index: number) => {
+    const updated = ticketStages.map((stg, i) => {
+      if (i === index) {
+        const nextCompleted = !stg.completed;
+        return {
+          ...stg,
+          completed: nextCompleted,
+          date: nextCompleted ? 'الآن' : '-'
+        };
+      }
+      return stg;
+    });
+
+    setTicketStages(updated);
+
+    const completedCount = updated.filter(s => s.completed).length;
+    const calcProgress = Math.round((completedCount / updated.length) * 100);
+    setTicketProgress(calcProgress);
+
+    const lastCompletedIndex = updated.map(s => s.completed).lastIndexOf(true);
+    if (lastCompletedIndex >= 0 && updated[lastCompletedIndex]?.status) {
+      setTicketStatus(updated[lastCompletedIndex].status);
+    }
+  };
 
   // Invoice Modal State
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+  const [invoicePrintFormat, setInvoicePrintFormat] = useState<'A4' | '88mm' | '44mm'>('A4');
   const [invCustomerName, setInvCustomerName] = useState('');
   const [invCustomerPhone, setInvCustomerPhone] = useState('');
   const [invItemDesc, setInvItemDesc] = useState('');
@@ -119,6 +186,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const [branchCity, setBranchCity] = useState('بغداد');
   const [branchAddress, setBranchAddress] = useState('');
   const [branchPhone, setBranchPhone] = useState('');
+  const [editingBranchId, setEditingBranchId] = useState<string | null>(null);
+  const [branchIsMain, setBranchIsMain] = useState(false);
 
   // Staff Modal
   const [showStaffModal, setShowStaffModal] = useState(false);
@@ -140,6 +209,16 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
   const [newServiceInput, setNewServiceInput] = useState('');
   const [mandatoryFormError, setMandatoryFormError] = useState('');
 
+  // Product Orders States
+  const [productOrders, setProductOrders] = useState<ProductOrder[]>([]);
+  const [selectedOrderForAction, setSelectedOrderForAction] = useState<ProductOrder | null>(null);
+  const [orderActionType, setOrderActionType] = useState<'approve' | 'reject' | 'update_status' | null>(null);
+  const [orderActionNotes, setOrderActionNotes] = useState('');
+  const [orderDeliveryDate, setOrderDeliveryDate] = useState('');
+  const [orderDeliveryTime, setOrderDeliveryTime] = useState('');
+  const [newOrderStatus, setNewOrderStatus] = useState<ProductOrderStatus>('pending');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<'all' | ProductOrderStatus>('all');
+
   useEffect(() => {
     fetchData();
   }, [userProfile]);
@@ -159,12 +238,14 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
         setMandatoryFacebook(targetShop.socialLinks?.facebook || '');
         setMandatoryInstagram(targetShop.socialLinks?.instagram || '');
         setMandatoryServices(targetShop.services || []);
+        setBranches(targetShop.branches || []);
       }
       setProducts(MockDataService.getProducts());
       setTickets(MockDataService.getTickets());
       setInvoices(MockDataService.getInvoices());
       setStaffList(MockDataService.getStaff());
       setOffersList(MockDataService.getOffers());
+      setProductOrders(MockDataService.getProductOrders());
     } catch (err) {
       console.error(err);
     } finally {
@@ -187,6 +268,11 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     if (!currentShop) return [];
     return invoices.filter((i) => i.shopId === currentShop.id);
   }, [invoices, currentShop]);
+
+  const shopOrders = useMemo(() => {
+    if (!currentShop) return [];
+    return productOrders.filter((o) => o.shopId === currentShop.id);
+  }, [productOrders, currentShop]);
 
   const totalSalesIQD = useMemo(() => {
     return shopInvoices.reduce((sum, inv) => sum + inv.totalIQD, 0);
@@ -257,34 +343,31 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     });
   };
 
-  // Accept ticket request by owner first, then allow filling services and cost
+  // Accept ticket request by owner first, then set cost and request customer approval
   const handleAcceptTicketRequest = (ticket: MaintenanceTicket) => {
-    const updatedStages = ticket.stages.map((stg) => {
-      if (stg.status === 'pending_owner_approval' || stg.status === 'received') {
+    const initialStages = getOrInitializeTicketStages(ticket).map((stg) => {
+      if (stg.status === 'pending_owner_approval') {
         return { ...stg, completed: true, date: 'الآن' };
+      }
+      if (stg.status === 'awaiting_approval') {
+        return { ...stg, completed: true, title: 'تم تحديد السعر والتكلفة - بانتظار موافقة الزبون', date: 'الآن' };
       }
       return stg;
     });
 
-    MockDataService.updateTicket(ticket.id, {
-      status: 'inspecting',
-      updatedAt: new Date().toISOString(),
-      stages: updatedStages,
-    });
-    setTickets(MockDataService.getTickets());
-
-    // Open modal immediately so owner can select services, set cost & notes
-    setSelectedTicket({ ...ticket, status: 'inspecting' });
-    setTicketStatus('inspecting');
-    setTicketProgress(30);
+    // Open modal immediately so owner can select services, set cost & notes and send quote to customer
+    setSelectedTicket({ ...ticket, status: 'awaiting_approval' });
+    setTicketStatus('awaiting_approval');
+    setTicketProgress(20);
     setTicketCost(ticket.estimatedCostIQD || 25000);
-    setTechnicianNote(ticket.technicianNote || 'تم قبول الطلب بوسطة صاحب المحل. جاري فحص الجهاز وتحديد الخدمات والتكلفة.');
+    setTechnicianNote(ticket.technicianNote || 'تمت مراجعة الجهاز وتحديد الخدمات والتكلفة. يرجى المراجعة والموافقة للبدء بالصيانة.');
     setTicketSelectedServices(ticket.selectedServices || (currentShop?.services ? [currentShop.services[0]] : []));
+    setTicketStages(initialStages);
     setShowTicketModal(true);
   };
 
   const handleRejectTicketRequest = (ticket: MaintenanceTicket) => {
-    const updatedStages = ticket.stages.map((stg) => {
+    const updatedStages = (ticket.stages && ticket.stages.length > 0 ? ticket.stages : getOrInitializeTicketStages(ticket)).map((stg) => {
       if (stg.status === 'pending_owner_approval') {
         return { ...stg, title: 'تم رفض الطلب من قبل صاحب المحل', completed: true, date: 'الآن' };
       }
@@ -305,8 +388,9 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     e.preventDefault();
     if (!selectedTicket) return;
 
-    const updatedStages = selectedTicket.stages.map((stg) => {
-      if (stg.status === ticketStatus) {
+    const currentStagesList = ticketStages.length > 0 ? ticketStages : getOrInitializeTicketStages(selectedTicket);
+    const finalStages = currentStagesList.map((stg) => {
+      if (stg.status === ticketStatus && !stg.completed) {
         return { ...stg, completed: true, date: 'الآن' };
       }
       return stg;
@@ -320,11 +404,53 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       technicianNote,
       selectedServices: ticketSelectedServices,
       updatedAt: new Date().toISOString(),
-      stages: updatedStages,
+      stages: finalStages,
     };
 
     MockDataService.updateTicket(selectedTicket.id, updatedTicket);
     setTickets(MockDataService.getTickets());
+
+    // Send notification to the customer about maintenance updates
+    if (selectedTicket.customerId) {
+      const sName = selectedTicket.shopName || currentShop?.name || 'مركز صيانة برهم';
+      if (ticketStatus === 'ready') {
+        MockDataService.addNotification({
+          userId: selectedTicket.customerId,
+          title: 'جهازك جاهز للتسليم! 📱✅',
+          message: `تم الانتهاء من صيانة جهازك وهو الآن جاهز للاستلام من المحل.\n\n• رقم التذكرة: ${selectedTicket.ticketNumber}\n• اسم المحل: ${sName}\n• تاريخ الجاهزية: ${new Date().toLocaleDateString('ar-IQ')}`,
+          type: 'maintenance',
+          category: 'maintenance',
+          read: false
+        });
+      } else if (ticketStatus === 'awaiting_approval') {
+        MockDataService.addNotification({
+          userId: selectedTicket.customerId,
+          title: 'عرض سعر وتكلفة صيانة جديد 💰',
+          message: `تم تحديد تكلفة صيانة جهازك (${selectedTicket.deviceType}) بمبلغ ${formatIQD(Number(ticketCost))} د.ع لدى مركز ${sName}.\n\nملاحظة المحل/الفني: ${technicianNote || 'لا توجد ملاحظات إضافية'}.\nيرجى فتح التذكرة في التطبيق للموافقة والبدء بالعمل.`,
+          type: 'maintenance',
+          category: 'maintenance',
+          read: false
+        });
+      } else {
+        const statusLabels: Record<string, string> = {
+          pending_owner_approval: 'بانتظار تحديد التكلفة',
+          awaiting_approval: 'بانتظار موافقة الزبون على السعر',
+          inspecting: 'قيد الفحص وتجهيز العمل',
+          repairing: 'قيد الصيانة والتصليح',
+          ready: 'جاهز للتسليم',
+          delivered: 'تم التسليم والانتهاء',
+          rejected: 'مرفوض'
+        };
+        MockDataService.addNotification({
+          userId: selectedTicket.customerId,
+          title: 'تحديث جديد على حالة صيانة جهازك 🔧',
+          message: `تم تحديث حالة صيانة جهازك (${selectedTicket.deviceType}) إلى: (${statusLabels[ticketStatus] || ticketStatus}).\n\nملاحظات الفني: ${technicianNote || 'لا توجد ملاحظات إضافية حتى الآن.'}`,
+          type: 'maintenance',
+          category: 'maintenance',
+          read: false
+        });
+      }
+    }
 
     setShowTicketModal(false);
   };
@@ -340,8 +466,8 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       invoiceNumber: newInvNum,
       shopId: userProfile?.shopId || 'shop_barham_main',
       shopName: userProfile?.displayName ? `متجر ${userProfile.displayName}` : 'مركز برهم برو للصيانة والبرمجيات',
-      shopAddress: 'بغداد - شارع الصناعة - مقابل الجامعة التكنولوجية',
-      shopPhone: '07700001122',
+      shopAddress: currentShop?.address || 'بغداد - شارع الصناعة',
+      shopPhone: currentShop?.phone || '07700001122',
       customerId: 'cust_gen',
       customerName: invCustomerName || 'زبون عام',
       customerPhone: invCustomerPhone || '07700000000',
@@ -368,7 +494,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     setInvoices(MockDataService.getInvoices());
 
     try {
-      printInvoicePDF(newInvoice);
+      printInvoicePDF(newInvoice, invoicePrintFormat);
     } catch (err) {
       console.error('Print PDF failed:', err);
     }
@@ -382,20 +508,101 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
     setInvNotes('');
   };
 
-  // Add Branch
+
+
+  // Add / Edit Branch
   const handleAddBranch = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newBranch: Branch = {
-      id: `br_${Date.now()}`,
-      shopId: 'shop_barham_main',
-      name: branchName,
-      city: branchCity,
-      address: branchAddress,
-      phone: branchPhone,
-      workingHours: '10:00 ص - 10:00 م',
-    };
-    setBranches((prev) => [...prev, newBranch]);
+    const shopId = currentShop?.id || userProfile?.shopId || 'shop_barham_main';
+    
+    if (editingBranchId) {
+      MockDataService.updateShopBranch(shopId, editingBranchId, {
+        name: branchName,
+        city: branchCity,
+        address: branchAddress,
+        phone: branchPhone,
+        isMain: branchIsMain,
+      });
+    } else {
+      MockDataService.addShopBranch(shopId, {
+        name: branchName,
+        city: branchCity,
+        address: branchAddress,
+        phone: branchPhone,
+        workingHours: '09:00 ص - 10:00 م',
+        isMain: branchIsMain,
+      });
+    }
+
+    // Refresh
+    const updatedShops = MockDataService.getShops();
+    const targetShop = updatedShops.find((s) => s.id === shopId);
+    if (targetShop) {
+      setCurrentShop(targetShop);
+      setBranches(targetShop.branches || []);
+    }
+
     setShowBranchModal(false);
+    setBranchName('');
+    setBranchCity('بغداد');
+    setBranchAddress('');
+    setBranchPhone('');
+    setEditingBranchId(null);
+    setBranchIsMain(false);
+  };
+
+  const handleEditBranch = (b: Branch) => {
+    setEditingBranchId(b.id);
+    setBranchName(b.name);
+    setBranchCity(b.city || 'بغداد');
+    setBranchAddress(b.address);
+    setBranchPhone(b.phone);
+    setBranchIsMain(!!b.isMain);
+    setShowBranchModal(true);
+  };
+
+  const handleDeleteBranch = (branchId: string) => {
+    if (userProfile?.role !== 'owner') {
+      setConfirmModal({
+        isOpen: true,
+        title: 'خطأ في الصلاحيات ⚠️',
+        message: 'عذراً، لا تمتلك الصلاحية الكافية لحذف الفروع. يسمح فقط لصاحب المحل بالقيام بهذه العملية.',
+        onConfirm: () => {
+          setConfirmModal({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+        }
+      });
+      return;
+    }
+
+    setConfirmModal({
+      isOpen: true,
+      title: 'تأكيد حذف الفرع',
+      message: 'هل أنت متأكد من رغبتك في حذف هذا الفرع نهائياً من المركز؟',
+      onConfirm: () => {
+        const shopId = currentShop?.id || userProfile?.shopId || 'shop_barham_main';
+        MockDataService.deleteShopBranch(shopId, branchId);
+        
+        const updatedShops = MockDataService.getShops();
+        const targetShop = updatedShops.find((s) => s.id === shopId);
+        if (targetShop) {
+          setCurrentShop(targetShop);
+          setBranches(targetShop.branches || []);
+        }
+        setConfirmModal({ isOpen: false, title: '', message: '', onConfirm: () => {} });
+      }
+    });
+  };
+
+  const handleSetMainBranch = (branchId: string) => {
+    const shopId = currentShop?.id || userProfile?.shopId || 'shop_barham_main';
+    MockDataService.setMainBranch(shopId, branchId);
+    
+    const updatedShops = MockDataService.getShops();
+    const targetShop = updatedShops.find((s) => s.id === shopId);
+    if (targetShop) {
+      setCurrentShop(targetShop);
+      setBranches(targetShop.branches || []);
+    }
   };
 
   // Handle Save Offer
@@ -549,32 +756,53 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
 
   const checkApprovalStatus = async () => {
     if (!userProfile) return;
-    const mockUser = MockDataService.getUserById(userProfile.uid);
-    const shops = MockDataService.getShops();
-    const requests = MockDataService.getShopRequests();
+    setCheckingStatus(true);
+    setStatusMessage('');
+    try {
+      await fetchData();
+      const shops = MockDataService.getShops();
+      const requests = MockDataService.getShopRequests();
 
-    const targetShop = shops.find((s) => s.ownerId === userProfile.uid || (userProfile.shopId && s.id === userProfile.shopId));
-    const targetReq = requests.find((r) => r.ownerId === userProfile.uid || (r.email && r.email.toLowerCase() === userProfile.email.toLowerCase()));
+      const targetShop = shops.find((s) => s.ownerId === userProfile.uid || (userProfile.shopId && s.id === userProfile.shopId));
+      const targetReq = requests.find((r) => r.ownerId === userProfile.uid || (r.email && r.email.toLowerCase() === userProfile.email.toLowerCase()));
 
-    // Approved ONLY if Admin explicitly marked shop or request as approved
-    const isApprovedByAdmin = (targetShop && targetShop.status === 'approved') || (targetReq && targetReq.status === 'approved');
+      if (targetShop) {
+        setCurrentShop(targetShop);
+      }
 
-    if (isApprovedByAdmin) {
-      const activeShopId = targetShop?.id || userProfile.shopId || (targetReq ? `shop_${targetReq.id}` : `shop_${Date.now()}`);
-      await updateUserProfile({
-        status: 'active',
-        shopId: activeShopId,
-        role: 'owner'
-      });
-      fetchData();
+      const isApprovedByAdmin = (targetShop && targetShop.status === 'approved') || (targetReq && targetReq.status === 'approved');
+      const isRejectedByAdmin = (targetShop && targetShop.status === 'rejected') || (targetReq && targetReq.status === 'rejected');
+
+      if (isApprovedByAdmin) {
+        const activeShopId = targetShop?.id || userProfile.shopId || (targetReq ? `shop_${targetReq.id}` : `shop_${Date.now()}`);
+        await updateUserProfile({
+          status: 'active',
+          shopId: activeShopId,
+          role: 'owner'
+        });
+        await fetchData();
+        setStatusMessage('تمت الموافقة على متجرك بنجاح! جاري التوجيه...');
+      } else if (isRejectedByAdmin) {
+        setStatusMessage('عذراً، تم رفض طلب اعتماد المحل من قبل إدارة المنصة.');
+      } else {
+        setStatusMessage('حالة الحساب لا زالت قيد الانتظار والمراجعة.');
+      }
+    } catch (err) {
+      console.error(err);
+      setStatusMessage('حدث خطأ أثناء التحقق من الحالة.');
+    } finally {
+      setCheckingStatus(false);
+      setTimeout(() => setStatusMessage(''), 5000);
     }
   };
+
+  const isRejected = (currentShop && currentShop.status === 'rejected') || (userProfile?.status === 'rejected');
 
   const isAccountPending =
     userProfile?.role === 'owner' && (
       userProfile?.status === 'pending' ||
       userProfile?.status === 'suspended' ||
-      (currentShop && currentShop.status === 'pending')
+      (currentShop && (currentShop.status === 'pending' || currentShop.status === 'rejected'))
     );
 
   useEffect(() => {
@@ -582,38 +810,57 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       checkApprovalStatus();
       const interval = setInterval(() => {
         checkApprovalStatus();
-      }, 2500);
+      }, 3500);
       return () => clearInterval(interval);
     }
   }, [isAccountPending, userProfile?.uid]);
 
   if (isAccountPending) {
     return (
-      <div className="max-w-2xl mx-auto my-12 bg-slate-900 border border-amber-500/30 rounded-3xl p-8 sm:p-10 text-center space-y-6 shadow-2xl animate-in fade-in zoom-in-95" dir="rtl">
-        <div className="w-20 h-20 rounded-3xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mx-auto text-amber-400 shadow-xl shadow-amber-500/10">
-          <Clock className="w-10 h-10 animate-pulse" />
+      <div className="max-w-2xl mx-auto my-12 bg-slate-900 border border-slate-800 rounded-3xl p-8 sm:p-10 text-center space-y-6 shadow-2xl animate-in fade-in zoom-in-95" dir="rtl">
+        <div className={`w-20 h-20 rounded-3xl border flex items-center justify-center mx-auto shadow-xl ${
+          isRejected 
+            ? 'bg-red-500/10 border-red-500/30 text-red-400 shadow-red-500/10' 
+            : 'bg-amber-500/10 border-amber-500/30 text-amber-400 shadow-amber-500/10'
+        }`}>
+          {isRejected ? <XCircle className="w-10 h-10 animate-pulse" /> : <Clock className="w-10 h-10 animate-pulse" />}
         </div>
         <div className="space-y-2">
-          <h2 className="text-2xl sm:text-3xl font-black text-white">الحساب معلق ⏳ بانتظار موافقة المالك</h2>
+          <h2 className="text-2xl sm:text-3xl font-black text-white">
+            {isRejected ? 'تم رفض طلب المحل ❌' : 'الحساب معلق ⏳ بانتظار موافقة المالك'}
+          </h2>
           <p className="text-sm text-slate-300 leading-relaxed max-w-lg mx-auto">
-            تم تسجيل حساب المحل بنجاح. حسابك معلق حالياً ولا يمكنك إجراء أي عمليات أو إضافة منتجات أو فواتير حتى يتم قبول طلبك وموافقته رسمياً من قبل مالك المنصة الرئيسي (Super Admin).
+            {isRejected
+              ? 'عذراً، تم رفض طلب اعتماد تسجيل المحل من قبل مالك المنصة الرئيسي (Super Admin). يرجى مراجعة إدارة المنصة أو التواصل عبر الدعم الفني.'
+              : 'تم تسجيل حساب المحل بنجاح. حسابك معلق حالياً ولا يمكنك إجراء أي عمليات أو إضافة منتجات أو فواتير حتى يتم قبول طلبك وموافقته رسمياً من قبل مالك المنصة الرئيسي (Super Admin).'
+            }
           </p>
         </div>
-        <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-xs text-amber-300 font-bold flex items-center justify-center gap-2">
-          <span className="w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
-          <span>حالة الحساب: معلق (قيد الانتظار والمراجعة من الإدارة)</span>
+        <div className={`p-4 bg-slate-950 border rounded-2xl text-xs font-bold flex items-center justify-center gap-2 ${
+          isRejected ? 'border-red-500/30 text-red-400' : 'border-slate-800 text-amber-300'
+        }`}>
+          <span className={`w-2.5 h-2.5 rounded-full ${isRejected ? 'bg-red-500' : 'bg-amber-400 animate-ping'}`}></span>
+          <span>{isRejected ? 'حالة الحساب: مرفوض رسمياً' : 'حالة الحساب: معلق (قيد الانتظار والمراجعة من الإدارة)'}</span>
         </div>
+
+        {statusMessage && (
+          <div className="bg-blue-500/20 border border-blue-500/40 text-blue-300 text-xs font-bold p-3.5 rounded-xl animate-fade-in">
+            {statusMessage}
+          </div>
+        )}
+
         <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
           <button
             onClick={() => checkApprovalStatus()}
-            className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2"
+            disabled={checkingStatus}
+            className="bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2 disabled:opacity-50 cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4 animate-spin" />
-            <span>التحقق من موافقة المالك الآن</span>
+            <RefreshCw className={`w-4 h-4 ${checkingStatus ? 'animate-spin' : ''}`} />
+            <span>{checkingStatus ? 'جاري التحقق...' : 'التحقق من موافقة المالك الآن'}</span>
           </button>
           <button
             onClick={() => logout()}
-            className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2"
+            className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs py-3 px-6 rounded-2xl transition-all shadow-lg flex items-center gap-2 cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>تسجيل الخروج والعودة لاحقاً</span>
@@ -1006,6 +1253,7 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       <div className="flex border-b border-slate-800 space-x-2 space-x-reverse overflow-x-auto pb-1">
         {[
           { id: 'overview', label: 'نظرة عامة والمنتجات', icon: <Package className="w-4 h-4" /> },
+          { id: 'orders', label: 'طلبات الشراء', icon: <ShoppingBag className="w-4 h-4 text-emerald-400" /> },
           { id: 'maintenance', label: 'إدارة طلبات الصيانة', icon: <Wrench className="w-4 h-4" /> },
           { id: 'invoices', label: 'سجل الفواتير والـ PDF', icon: <Receipt className="w-4 h-4" /> },
           { id: 'offers', label: 'إدارة العروض والخصومات', icon: <Tag className="w-4 h-4 text-rose-400" /> },
@@ -1222,18 +1470,20 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
 
                         <button
                           onClick={() => {
+                            const initialStages = getOrInitializeTicketStages(t);
                             setSelectedTicket(t);
                             setTicketStatus(t.status);
                             setTicketProgress(t.progressPercent);
                             setTicketCost(t.estimatedCostIQD || 0);
                             setTechnicianNote(t.technicianNote || '');
                             setTicketSelectedServices(t.selectedServices || []);
+                            setTicketStages(initialStages);
                             setShowTicketModal(true);
                           }}
                           className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-lg shadow-blue-600/20 flex items-center gap-1"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
-                          <span>تعديل الخدمات والتكلفة</span>
+                          <span>إدارة الصيانة والمراحل</span>
                         </button>
                       </div>
                     )}
@@ -1250,13 +1500,23 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
         <div className="space-y-4">
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-black text-white">سجل الفواتير وطباعة الـ PDF</h3>
-            <button
-              onClick={() => setShowInvoiceModal(true)}
-              className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2"
-            >
-              <Printer className="w-4 h-4" />
-              <span>فاتورة جديدة PDF</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setInvoicePrintFormat('A4');
+                  setInvCustomerName('');
+                  setInvCustomerPhone('');
+                  setInvItemDesc('');
+                  setInvItemPrice(0);
+                  setInvItemQty(1);
+                  setShowInvoiceModal(true);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2"
+              >
+                <Printer className="w-4 h-4" />
+                <span>فاتورة جديدة PDF</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1310,9 +1570,17 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       {activeSubTab === 'branches' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-lg font-black text-white">فروع المركز</h3>
+            <h3 className="text-lg font-black text-white">فروع المركز ({branches.length})</h3>
             <button
-              onClick={() => setShowBranchModal(true)}
+              onClick={() => {
+                setEditingBranchId(null);
+                setBranchName('');
+                setBranchCity(currentShop?.city || 'بغداد');
+                setBranchAddress('');
+                setBranchPhone('');
+                setBranchIsMain(false);
+                setShowBranchModal(true);
+              }}
               className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5"
             >
               <Plus className="w-4 h-4" />
@@ -1320,22 +1588,58 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
             </button>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-slate-900 border border-blue-500/40 rounded-2xl p-5 space-y-2 relative">
-              <span className="bg-blue-600 text-white font-bold text-[10px] px-2.5 py-0.5 rounded-full absolute top-4 left-4">الفرع الرئيسي</span>
-              <h4 className="font-bold text-white text-base">فرع شارع فلسطين (الرئيسي)</h4>
-              <p className="text-xs text-slate-400">بغداد - قرب ساحة الميسلون</p>
-              <p className="text-xs text-emerald-400 font-mono">07701234567</p>
+          {branches.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400">
+              لا توجد فروع مضافة حالياً. أضف الفرع الأول لمركزك الآن!
             </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {branches.map((b) => (
+                <div 
+                  key={b.id} 
+                  className={`bg-slate-900 border rounded-2xl p-5 space-y-3 relative ${
+                    b.isMain ? 'border-blue-500/40' : 'border-slate-800'
+                  }`}
+                >
+                  {b.isMain && (
+                    <span className="bg-blue-600 text-white font-bold text-[10px] px-2.5 py-0.5 rounded-full absolute top-4 left-4">
+                      الفرع الرئيسي
+                    </span>
+                  )}
+                  
+                  <div className="space-y-1">
+                    <h4 className="font-bold text-white text-base">{b.name}</h4>
+                    <p className="text-xs text-slate-400">{b.city} - {b.address}</p>
+                    <p className="text-xs text-emerald-400 font-mono font-bold">{b.phone}</p>
+                  </div>
 
-            {branches.map((b) => (
-              <div key={b.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-2">
-                <h4 className="font-bold text-white text-base">{b.name}</h4>
-                <p className="text-xs text-slate-400">{b.city} - {b.address}</p>
-                <p className="text-xs text-emerald-400 font-mono">{b.phone}</p>
-              </div>
-            ))}
-          </div>
+                  <div className="flex items-center gap-2 pt-2 border-t border-slate-800/60 text-xs">
+                    {!b.isMain && (
+                      <button
+                        onClick={() => handleSetMainBranch(b.id)}
+                        className="text-blue-400 hover:text-blue-300 font-bold ml-auto"
+                      >
+                        تعيين كرئيسي
+                      </button>
+                    )}
+                    <button
+                      onClick={() => handleEditBranch(b)}
+                      className={`text-slate-300 hover:text-white font-semibold ${b.isMain ? 'ml-auto' : ''}`}
+                    >
+                      تعديل
+                    </button>
+                    <span className="text-slate-600">|</span>
+                    <button
+                      onClick={() => handleDeleteBranch(b.id)}
+                      className="text-red-400 hover:text-red-300 font-semibold"
+                    >
+                      حذف
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -1447,6 +1751,232 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
         </div>
       )}
 
+      {/* SUBTAB: PRODUCT ORDERS */}
+      {activeSubTab === 'orders' && (
+        <div className="space-y-6">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <h3 className="text-xl font-black text-white">نظام طلبات المنتجات والمبيعات</h3>
+              <p className="text-xs text-slate-400">إدارة طلبات الشراء الواردة من الزبناء، وتحديث حالاتها وتأكيد التوصيل.</p>
+            </div>
+            
+            {/* Quick Stats */}
+            <div className="flex items-center gap-3">
+              <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center min-w-28">
+                <div className="text-[10px] text-slate-400 font-bold">بانتظار الموافقة</div>
+                <div className="text-lg font-black text-amber-500">
+                  {shopOrders.filter(o => o.status === 'pending').length}
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center min-w-28">
+                <div className="text-[10px] text-slate-400 font-bold">إجمالي الطلبات</div>
+                <div className="text-lg font-black text-blue-500">
+                  {shopOrders.length}
+                </div>
+              </div>
+              <div className="bg-slate-900 border border-slate-800 rounded-xl px-4 py-2.5 text-center min-w-28">
+                <div className="text-[10px] text-slate-400 font-bold">إجمالي المبيعات</div>
+                <div className="text-lg font-black text-emerald-500">
+                  {formatIQD(shopOrders.filter(o => o.status !== 'rejected' && o.status !== 'pending').reduce((sum, o) => sum + o.totalIQD, 0))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Bar */}
+          <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-slate-800">
+            {[
+              { id: 'all', label: 'كافة الطلبات' },
+              { id: 'pending', label: 'بانتظار الموافقة' },
+              { id: 'approved', label: 'تمت الموافقة' },
+              { id: 'delivered', label: 'تم التسليم' },
+              { id: 'rejected', label: 'مرفوض' }
+            ].map(filter => (
+              <button
+                key={filter.id}
+                onClick={() => setOrderStatusFilter(filter.id as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all border whitespace-nowrap ${
+                  orderStatusFilter === filter.id
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-md'
+                    : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Orders List */}
+          {shopOrders.filter(o => orderStatusFilter === 'all' || o.status === orderStatusFilter).length === 0 ? (
+            <div className="text-center py-12 bg-slate-900 border border-slate-800 rounded-2xl">
+              <ShoppingBag className="w-12 h-12 text-slate-700 mx-auto mb-3" />
+              <h4 className="text-slate-300 font-bold text-sm">لا توجد طلبات شراء تطابق هذا الفلتر</h4>
+              <p className="text-xs text-slate-500 mt-1">عند قيام الزبائن بشراء قطع غيار أو هواتف من متجرك الإلكتروني، ستظهر هنا.</p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {shopOrders
+                .filter(o => orderStatusFilter === 'all' || o.status === orderStatusFilter)
+                .map((order) => {
+                  const statusInfo = {
+                    pending: { label: 'بانتظار الموافقة', color: 'bg-amber-500/10 text-amber-500 border-amber-500/20' },
+                    approved: { label: 'تمت الموافقة', color: 'bg-emerald-500/10 text-emerald-500 border-emerald-500/20' },
+                    preparing: { label: 'قيد التجهيز', color: 'bg-indigo-500/10 text-indigo-500 border-indigo-500/20' },
+                    shipped: { label: 'تم الشحن', color: 'bg-blue-500/10 text-blue-500 border-blue-500/20' },
+                    delivered: { label: 'تم التسليم', color: 'bg-teal-500/10 text-teal-500 border-teal-500/20' },
+                    rejected: { label: 'مرفوض', color: 'bg-red-500/10 text-red-500 border-red-500/20' }
+                  }[order.status];
+
+                  return (
+                    <div key={order.id} className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                      {/* Order Header */}
+                      <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex flex-wrap justify-between items-center gap-3">
+                        <div className="flex items-center gap-3">
+                          <span className="text-white font-black text-sm">{order.orderNumber}</span>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusInfo.color}`}>
+                            {statusInfo.label}
+                          </span>
+                          {order.isReservation && (
+                            <span className="text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2.5 py-0.5 rounded-full">
+                              📌 حجز مباشر من المحل
+                            </span>
+                          )}
+                          <span className="text-[10px] text-slate-500 font-medium">
+                            {new Date(order.createdAt).toLocaleString('ar-IQ')}
+                          </span>
+                        </div>
+                        <div className="text-emerald-400 font-black text-sm">
+                          {formatIQD(order.totalIQD)}
+                        </div>
+                      </div>
+
+                      {/* Order Body */}
+                      <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs">
+                        {/* Column 1: Customer info */}
+                        <div className="space-y-2 border-l border-slate-800/60 pl-6">
+                          <h4 className="font-bold text-slate-400 border-b border-slate-800 pb-1 mb-2">معلومات الزبون</h4>
+                          <div><span className="text-slate-500 font-bold">الاسم:</span> <span className="text-white">{order.customerName}</span></div>
+                          <div><span className="text-slate-500 font-bold">رقم الهاتف:</span> <span className="text-white font-mono">{order.customerPhone}</span></div>
+                          <div><span className="text-slate-500 font-bold">العنوان:</span> <span className="text-white">{order.customerAddress}</span></div>
+                          {order.customerNotes && (
+                            <div className="bg-slate-950 p-2 rounded-xl mt-2 border border-slate-800">
+                              <span className="text-slate-400 font-bold block mb-1">ملاحظة الزبون:</span>
+                              <p className="text-slate-300 leading-relaxed">{order.customerNotes}</p>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Column 2: Items list */}
+                        <div className="space-y-2 border-l border-slate-800/60 pl-6 lg:col-span-1">
+                          <h4 className="font-bold text-slate-400 border-b border-slate-800 pb-1 mb-2">المنتجات المطلوبة</h4>
+                          <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
+                            {order.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center gap-3 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                                {item.image && (
+                                  <img src={item.image} alt={item.productName} className="w-10 h-10 object-contain bg-slate-900 rounded-lg" />
+                                )}
+                                <div className="flex-1 min-w-0">
+                                  <div className="font-bold text-slate-200 truncate">{item.productName}</div>
+                                  <div className="text-[10px] text-slate-400">
+                                    {item.quantity} × {formatIQD(item.priceIQD)}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {/* Column 3: Actions & Status */}
+                        <div className="flex flex-col justify-between">
+                          <div>
+                            <h4 className="font-bold text-slate-400 border-b border-slate-800 pb-1 mb-2">حالة الطلب وملاحظات الإدارة</h4>
+                            <div className="space-y-1.5">
+                              <div>
+                                <span className="text-slate-500 font-bold">طريقة الدفع:</span>{' '}
+                                <span className="text-amber-400 font-bold bg-amber-500/10 px-2 py-0.5 rounded">
+                                  {order.paymentMethod === 'cash' ? 'نقداً عند الاستلام' : 'زين كاش'}
+                                </span>
+                              </div>
+                              {order.deliveryDate && (
+                                <div className="bg-blue-500/10 border border-blue-500/30 text-blue-200 p-2.5 rounded-xl text-xs">
+                                  <span className="font-bold text-white block mb-0.5">موعد التسليم المحدد للزبون:</span>
+                                  <span className="font-bold text-emerald-400">{order.deliveryDate} {order.deliveryTime ? `— الساعة ${order.deliveryTime}` : ''}</span>
+                                </div>
+                              )}
+                              {order.ownerNotes && (
+                                <div className="bg-slate-950 p-2 rounded-xl border border-slate-800/80">
+                                  <span className="text-slate-400 font-bold block mb-1">ملاحظتك للزبون:</span>
+                                  <p className="text-slate-300 leading-relaxed">{order.ownerNotes}</p>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Order Action buttons */}
+                          <div className="mt-4 pt-4 border-t border-slate-800 flex flex-wrap gap-2">
+                            {order.status === 'pending' && (
+                              <>
+                                <button
+                                  onClick={() => {
+                                    setSelectedOrderForAction(order);
+                                    setOrderActionType('approve');
+                                    setOrderActionNotes('');
+                                    setOrderDeliveryDate(new Date().toISOString().split('T')[0]);
+                                    setOrderDeliveryTime('05:00 مساءً');
+                                    setNewOrderStatus('approved');
+                                  }}
+                                  className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2 px-3 rounded-xl transition-all shadow-md text-center"
+                                >
+                                  الموافقة على الطلب
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setSelectedOrderForAction(order);
+                                    setOrderActionType('reject');
+                                    setOrderActionNotes('');
+                                    setNewOrderStatus('rejected');
+                                  }}
+                                  className="flex-1 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white font-bold py-2 px-3 rounded-xl transition-all border border-red-500/20 text-center"
+                                >
+                                  رفض الطلب
+                                </button>
+                              </>
+                            )}
+
+                            {order.status !== 'pending' && order.status !== 'rejected' && order.status !== 'delivered' && (
+                              <button
+                                onClick={() => {
+                                  setSelectedOrderForAction(order);
+                                  setOrderActionType('update_status');
+                                  setOrderActionNotes(order.ownerNotes || '');
+                                  // set initial status to next logical state or current
+                                  const nextStatusMap: Record<ProductOrderStatus, ProductOrderStatus> = {
+                                    pending: 'approved',
+                                    approved: 'preparing',
+                                    preparing: 'shipped',
+                                    shipped: 'delivered',
+                                    delivered: 'delivered',
+                                    rejected: 'rejected'
+                                  };
+                                  setNewOrderStatus(nextStatusMap[order.status]);
+                                }}
+                                className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-3 rounded-xl transition-all shadow-md text-center flex items-center justify-center gap-1.5"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <span>تحديث حالة الطلب</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Add / Edit Product Modal */}
       {showProductModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1509,33 +2039,69 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
               </div>
 
               <div>
-                <label className="block text-slate-300 mb-1">صورة المنتج (رفع إلى Firebase Storage)</label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      setUploadingImg(true);
-                      try {
-                        const url = await uploadProductImage(file, 'products');
-                        setProdImage(url);
-                      } catch (err) {
-                        console.error('Error uploading product image:', err);
-                      } finally {
-                        setUploadingImg(false);
-                      }
-                    }
-                  }}
-                  className="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-600 file:text-white hover:file:bg-blue-500 cursor-pointer"
-                />
-                {uploadingImg && <p className="text-[11px] text-blue-400 mt-1">جاري رفع الصورة إلى Firebase Storage...</p>}
-                {prodImage && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <img src={prodImage} alt="Preview" className="w-12 h-12 rounded-xl object-cover border border-slate-700" />
-                    <span className="text-[10px] text-slate-400 truncate max-w-[200px]">{prodImage}</span>
+                <label className="block text-slate-300 mb-1">صورة المنتج</label>
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      id="product-image-file-input"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          setUploadingImg(true);
+                          try {
+                            const url = await uploadProductImage(file, 'products');
+                            setProdImage(url);
+                          } catch (err) {
+                            console.error('Error uploading product image:', err);
+                          } finally {
+                            setUploadingImg(false);
+                            e.target.value = '';
+                          }
+                        }
+                      }}
+                      className="hidden"
+                    />
+                    <label
+                      htmlFor="product-image-file-input"
+                      className="flex-1 bg-slate-950 border border-slate-800 hover:border-blue-500 rounded-xl p-2.5 text-xs text-slate-300 cursor-pointer flex items-center justify-center gap-2 transition-all font-medium"
+                    >
+                      <Upload className="w-4 h-4 text-blue-400" />
+                      <span>{uploadingImg ? 'جاري معالجة وضغط الصورة...' : 'اختيار صورة من الهاتف أو الكاميرا'}</span>
+                    </label>
                   </div>
-                )}
+
+                  <input
+                    type="text"
+                    value={prodImage}
+                    onChange={(e) => setProdImage(e.target.value)}
+                    placeholder="أو أدخل رابط صورة مباشر (URL)..."
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-xs text-white dir-ltr"
+                  />
+
+                  {uploadingImg && (
+                    <p className="text-[11px] text-blue-400 animate-pulse font-medium">⚡ جاري معالجة الصورة وتحسين حجمها لتسريع التطبيق...</p>
+                  )}
+
+                  {prodImage && (
+                    <div className="mt-2 flex items-center justify-between gap-3 bg-slate-950 p-2 rounded-xl border border-slate-800">
+                      <div className="flex items-center gap-2 overflow-hidden">
+                        <img src={prodImage} alt="Preview" className="w-12 h-12 rounded-lg object-cover border border-slate-700 shrink-0" />
+                        <span className="text-[10px] text-slate-400 truncate max-w-[180px]">
+                          {prodImage.startsWith('data:') ? 'تم ضغط الصورة وتجهيزها بنجاح ⚡' : prodImage}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setProdImage('')}
+                        className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-500/10 rounded-lg shrink-0 font-bold"
+                      >
+                        إزالة
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl mt-4">
@@ -1559,6 +2125,47 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
             <p className="text-xs text-slate-400 mb-4">الزبون: {selectedTicket.customerName} ({selectedTicket.deviceType})</p>
 
             <form onSubmit={handleUpdateTicketStatus} className="space-y-4 text-xs">
+              {/* Interactive Maintenance Stages */}
+              <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="block text-amber-300 font-bold text-xs">
+                    مراحل الصيانة وتحديد المكتمل (اضغط للتحديد):
+                  </label>
+                  <span className="text-[11px] font-black text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
+                    {ticketProgress}% نسبة تقدم الإصلاح
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  انقر على مراحل الصيانة لإكمالها. يتم تحديث نسبة التقدم وتظهر البطاقات فوراً لدى الزبون:
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 pt-1">
+                  {ticketStages.map((stage, idx) => (
+                    <button
+                      type="button"
+                      key={idx}
+                      onClick={() => handleToggleStage(idx)}
+                      className={`p-2.5 rounded-xl border text-right transition-all flex flex-col justify-between gap-2 group cursor-pointer ${
+                        stage.completed
+                          ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-200 shadow-md shadow-emerald-500/10'
+                          : 'bg-slate-900 border-slate-800 text-slate-400 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 font-bold">
+                        <CheckCircle2 className={`w-4 h-4 shrink-0 ${stage.completed ? 'text-emerald-400' : 'text-slate-600'}`} />
+                        <span className="text-xs leading-snug">{stage.title}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] pt-1 border-t border-slate-800/60">
+                        <span className={`font-bold ${stage.completed ? 'text-emerald-400' : 'text-slate-500'}`}>
+                          {stage.completed ? '✓ مكتملة' : 'قيد الانتظار'}
+                        </span>
+                        <span className="text-slate-400 font-mono">{stage.completed ? (stage.date || 'الآن') : '-'}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {/* Service Selection */}
               <div className="bg-slate-950 p-3.5 rounded-2xl border border-slate-800 space-y-2">
                 <label className="block text-amber-300 font-bold">
@@ -1696,13 +2303,64 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
 
             <form onSubmit={handleCreateInvoice} className="space-y-3 text-xs">
               <div>
+                <label className="block text-slate-300 mb-1">نوع وطريقة الطباعة</label>
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setInvoicePrintFormat('A4')}
+                    className={`py-2 px-2 rounded-xl font-bold border transition-all text-center ${
+                      invoicePrintFormat === 'A4'
+                        ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-600/30'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    ورق A4
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInvoicePrintFormat('88mm')}
+                    className={`py-2 px-2 rounded-xl font-bold border transition-all text-center ${
+                      invoicePrintFormat === '88mm'
+                        ? 'bg-emerald-600 text-white border-emerald-500 shadow-lg shadow-emerald-600/30'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    حراري 88mm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInvoicePrintFormat('44mm')}
+                    className={`py-2 px-2 rounded-xl font-bold border transition-all text-center ${
+                      invoicePrintFormat === '44mm'
+                        ? 'bg-purple-600 text-white border-purple-500 shadow-lg shadow-purple-600/30'
+                        : 'bg-slate-950 text-slate-300 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    حراري 44mm
+                  </button>
+                </div>
+              </div>
+
+              <div>
                 <label className="block text-slate-300 mb-1">اسم الزبون</label>
                 <input
                   type="text"
                   required
                   value={invCustomerName}
                   onChange={(e) => setInvCustomerName(e.target.value)}
-                  placeholder="أحمد علي"
+                  placeholder="الاسم الكامل للزبون"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 mb-1">رقم هاتف الزبون</label>
+                <input
+                  type="text"
+                  required
+                  value={invCustomerPhone}
+                  onChange={(e) => setInvCustomerPhone(e.target.value)}
+                  placeholder="07700000000"
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white"
                 />
               </div>
@@ -1754,37 +2412,83 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
       {showBranchModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-sm p-6 relative text-slate-100">
-            <button onClick={() => setShowBranchModal(false)} className="absolute top-4 left-4 text-slate-400">
+            <button 
+              onClick={() => {
+                setShowBranchModal(false);
+                setEditingBranchId(null);
+              }} 
+              className="absolute top-4 left-4 text-slate-400 hover:text-white"
+            >
               <X className="w-5 h-5" />
             </button>
-            <h4 className="text-lg font-black text-white mb-4">إضافة فرع جديد للمحل</h4>
-            <form onSubmit={handleAddBranch} className="space-y-3 text-xs">
-              <input
-                type="text"
-                required
-                placeholder="اسم الفرع (مثال: فرع المنصور)"
-                value={branchName}
-                onChange={(e) => setBranchName(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
-              />
-              <input
-                type="text"
-                required
-                placeholder="العنوان التفصيلي"
-                value={branchAddress}
-                onChange={(e) => setBranchAddress(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
-              />
-              <input
-                type="text"
-                required
-                placeholder="رقم هاتف الفرع"
-                value={branchPhone}
-                onChange={(e) => setBranchPhone(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
-              />
-              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl">
-                إضافة الفرع
+            <h4 className="text-lg font-black text-white mb-4">
+              {editingBranchId ? 'تعديل بيانات الفرع' : 'إضافة فرع جديد للمركز'}
+            </h4>
+            <form onSubmit={handleAddBranch} className="space-y-4 text-xs">
+              <div className="space-y-1">
+                <label className="block text-slate-400">اسم الفرع</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="مثال: فرع المنصور، فرع شارع فلسطين"
+                  value={branchName}
+                  onChange={(e) => setBranchName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">المحافظة / المدينة</label>
+                <select
+                  value={branchCity}
+                  onChange={(e) => setBranchCity(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
+                >
+                  {['بغداد', 'البصرة', 'الموصل', 'أربيل', 'النجف', 'كربلاء', 'بابل', 'الأنبار', 'ذي قار', 'كركوك', 'صلاح الدين', 'ميسان', 'المثنى', 'واسط', 'ديالى', 'دهوك', 'السليمانية'].map((city) => (
+                    <option key={city} value={city}>{city}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">العنوان التفصيلي</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="اسم الشارع، علامة دالة..."
+                  value={branchAddress}
+                  onChange={(e) => setBranchAddress(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label className="block text-slate-400">رقم هاتف الفرع</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="077XXXXXXXX"
+                  value={branchPhone}
+                  onChange={(e) => setBranchPhone(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-white font-mono"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 py-1">
+                <input
+                  type="checkbox"
+                  id="branchIsMain"
+                  checked={branchIsMain}
+                  onChange={(e) => setBranchIsMain(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-800 bg-slate-950 text-blue-600 focus:ring-blue-500"
+                />
+                <label htmlFor="branchIsMain" className="text-slate-300 font-bold select-none cursor-pointer">
+                  تعيين كفرع رئيسي للمركز
+                </label>
+              </div>
+
+              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl transition-all">
+                {editingBranchId ? 'حفظ التعديلات' : 'إضافة الفرع'}
               </button>
             </form>
           </div>
@@ -1893,6 +2597,129 @@ export const OwnerDashboard: React.FC<OwnerDashboardProps> = ({ onPreviewStore }
               >
                 {editingOfferId ? 'حفظ التعديلات' : 'إضافة العرض الآن'}
               </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Product Order Action Modal */}
+      {selectedOrderForAction && orderActionType && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl w-full max-w-md p-6 relative text-slate-100">
+            <button
+              onClick={() => setSelectedOrderForAction(null)}
+              className="absolute top-4 left-4 text-slate-400 hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            
+            <h4 className="text-lg font-black text-white mb-2">
+              {orderActionType === 'approve' && (selectedOrderForAction.isReservation ? 'الموافقة على طلب الحجز وتحديد موعد التسليم' : 'الموافقة على طلب الشراء')}
+              {orderActionType === 'reject' && 'رفض الطلب / الحجز'}
+              {orderActionType === 'update_status' && 'تحديث حالة الطلب / الحجز'}
+            </h4>
+            <p className="text-xs text-slate-400 mb-4">
+              الطلب: <span className="text-slate-200 font-bold">{selectedOrderForAction.orderNumber}</span> | الزبون: <span className="text-slate-200 font-bold">{selectedOrderForAction.customerName}</span> ({selectedOrderForAction.customerPhone})
+            </p>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                MockDataService.updateProductOrderStatus(
+                  selectedOrderForAction.id,
+                  newOrderStatus,
+                  orderActionNotes.trim() || undefined,
+                  orderDeliveryDate.trim() || undefined,
+                  orderDeliveryTime.trim() || undefined
+                );
+                // Refresh data
+                setProductOrders(MockDataService.getProductOrders());
+                setSelectedOrderForAction(null);
+              }}
+              className="space-y-4 text-xs"
+            >
+              {orderActionType === 'update_status' && (
+                <div>
+                  <label className="block text-slate-300 mb-1.5 font-bold">الحالة الجديدة:</label>
+                  <select
+                    value={newOrderStatus}
+                    onChange={(e) => setNewOrderStatus(e.target.value as ProductOrderStatus)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white font-bold"
+                  >
+                    <option value="preparing">قيد التجهيز</option>
+                    <option value="shipped">جاهز للاستلام من المحل</option>
+                    <option value="delivered">تم التسليم في المحل</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Date & Time selection for Approval */}
+              {(orderActionType === 'approve' || selectedOrderForAction.isReservation) && orderActionType !== 'reject' && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950 p-3 rounded-2xl border border-slate-800">
+                  <div>
+                    <label className="block text-amber-400 mb-1 font-bold">تاريخ التسليم / الاستلام *</label>
+                    <input
+                      type="date"
+                      required
+                      value={orderDeliveryDate}
+                      onChange={(e) => setOrderDeliveryDate(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-white font-bold text-xs"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-amber-400 mb-1 font-bold">ساعة / وقت التسليم *</label>
+                    <input
+                      type="text"
+                      required
+                      value={orderDeliveryTime}
+                      onChange={(e) => setOrderDeliveryTime(e.target.value)}
+                      placeholder="مثال: 05:00 مساءً"
+                      className="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-white font-bold text-xs"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-300 mb-1.5 font-bold">
+                  {orderActionType === 'approve' && 'ملاحظات أو تعليق للزبون (تظهر في إشعار الزبون):'}
+                  {orderActionType === 'reject' && 'سبب الرفض والاعتذار للزبون:'}
+                  {orderActionType === 'update_status' && 'ملاحظات إضافية للزبون حول الحالة الجديدة:'}
+                </label>
+                <textarea
+                  value={orderActionNotes}
+                  onChange={(e) => setOrderActionNotes(e.target.value)}
+                  placeholder={
+                    orderActionType === 'approve'
+                      ? 'مثال: تمت الموافقة على حجزك، ننتظر زيارتك للمحل في الوقت والتاريخ المحددين.'
+                      : orderActionType === 'reject'
+                      ? 'مثال: نعتذر منك، الكمية نفدت حالياً من المخزن.'
+                      : 'اكتب أي ملاحظة لتحديث حالة الطلب...'
+                  }
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-white h-24 resize-none leading-relaxed text-xs"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedOrderForAction(null)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-2.5 rounded-xl transition-all"
+                >
+                  إلغاء
+                </button>
+                <button
+                  type="submit"
+                  className={`flex-1 font-bold py-2.5 rounded-xl transition-all ${
+                    orderActionType === 'reject'
+                      ? 'bg-red-600 hover:bg-red-500 text-white'
+                      : 'bg-blue-600 hover:bg-blue-500 text-white'
+                  }`}
+                >
+                  تأكيد وإرسال الإشعار
+                </button>
+              </div>
             </form>
           </div>
         </div>

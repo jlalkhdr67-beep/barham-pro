@@ -67,7 +67,7 @@ export const Footer: React.FC = () => {
           <div className="flex items-center gap-1.5 text-slate-400">
             <span>تم التطوير بكل شغف بوساطة</span>
             <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500 mx-0.5" />
-            <span className="text-white font-black tracking-widest text-sm bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent px-1">GRG</span>
+            <span className="text-white font-black tracking-widest text-sm bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent px-1">AL-GARGARY</span>
           </div>
         </div>
       </div>

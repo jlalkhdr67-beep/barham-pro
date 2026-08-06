@@ -114,7 +114,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // Auto create profile in Firestore if missing
             const cleanEmail = (fbUser.email || '').toLowerCase().trim();
             const isSuperAdmin = cleanEmail === SUPER_ADMIN_EMAIL;
-            const targetRole: UserRole = isSuperAdmin ? 'admin' : (pendingRoleRef.current || 'customer');
+            const isOwnerRequest = MockDataService.getShopRequests().some(
+              (r) => r.ownerId === fbUser.uid || r.email?.toLowerCase().trim() === cleanEmail
+            ) || MockDataService.getShops().some(
+              (s) => s.ownerId === fbUser.uid
+            );
+            const targetRole: UserRole = isSuperAdmin ? 'admin' : (pendingRoleRef.current || (isOwnerRequest ? 'owner' : 'customer'));
             const initialStatus: 'pending' | 'active' = (targetRole === 'owner' && !isSuperAdmin) ? 'pending' : 'active';
             profile = {
               uid: fbUser.uid,
@@ -369,6 +374,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updated = { ...currentUser, ...updates };
       setCurrentUser(updated);
       setUserProfileState(updated);
+      if (updates.role) {
+        setActiveRole(updates.role);
+      }
     }
   };
 

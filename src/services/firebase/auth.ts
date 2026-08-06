@@ -145,16 +145,22 @@ export async function loginWithFirebase(email: string, pass: string): Promise<{ 
     }
   }
 
-  const finalRole: UserRole = isSuperAdmin ? 'admin' : 'customer';
+  // Determine role based on super-admin email, or existing shop request/shop list association
+  const isOwnerRequest = MockDataService.getShopRequests().some(
+    (r) => r.ownerId === fbUser.uid || r.email?.toLowerCase().trim() === cleanEmail
+  ) || MockDataService.getShops().some(
+    (s) => s.ownerId === fbUser.uid
+  );
+  const finalRole: UserRole = isSuperAdmin ? 'admin' : (isOwnerRequest ? 'owner' : 'customer');
 
   console.log('[Login Step 2] Fetching user profile from Firestore users/' + fbUser.uid);
   let profile = await getUserProfile(fbUser.uid);
-  if (!profile && isSuperAdmin) {
+  if (!profile) {
     profile = MockDataService.getUserById(fbUser.uid) || null;
   }
 
   if (!profile || (isSuperAdmin && profile.role !== 'admin')) {
-    console.log('[Login Step 2.1] Profile missing in Firestore. Creating document in users/' + fbUser.uid);
+    console.log('[Login Step 2.1] Profile missing in Firestore or role mismatch. Creating document in users/' + fbUser.uid);
     profile = {
       uid: fbUser.uid,
       email: cleanEmail,
@@ -162,7 +168,7 @@ export async function loginWithFirebase(email: string, pass: string): Promise<{ 
       phoneNumber: fbUser?.phoneNumber || (isSuperAdmin ? '07755387770' : ''),
       role: finalRole,
       createdAt: profile?.createdAt || new Date().toISOString(),
-      status: 'active'
+      status: isOwnerRequest ? 'pending' : 'active'
     };
     try {
       await setUserProfile(profile);

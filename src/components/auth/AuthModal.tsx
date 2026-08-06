@@ -189,7 +189,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
       const confirmation = await sendPhoneOtp(phoneNumber, 'recaptcha-container-modal');
       setConfirmationResult(confirmation);
       setOtpSent(true);
-      setMessage('تم إرسال رمز التحقق OTP بنجاح إلى هاتفك via Firebase Auth.');
+      setMessage('تم إرسال رمز التحقق OTP بنجاح إلى هاتفك.');
     } catch (err: any) {
       setError(getFirebaseErrorMessage(err));
     } finally {
@@ -213,7 +213,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
     try {
       const targetRole: UserRole = registerType === 'owner' ? 'owner' : 'customer';
       await confirmPhoneOtp(confirmationResult, otpCode, targetRole);
-      setMessage('تم التحقق بنجاح وتأكيد الحساب بواسطة Firebase Auth!');
+      setMessage('تم التحقق بنجاح وتأكيد الحساب!');
       setTimeout(() => {
         onClose();
       }, 1200);
@@ -393,7 +393,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, initialMo
                       required
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
-                      placeholder="أحمد علي العراقي"
+                      placeholder="الاسم الكامل"
                       className="w-full bg-slate-950 border border-slate-800 rounded-2xl py-3 pr-11 pl-4 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
                     />
                     <User className="w-4 h-4 text-slate-500 absolute right-4 top-3.5" />

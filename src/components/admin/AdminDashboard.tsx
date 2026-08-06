@@ -363,6 +363,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         } catch (e) {
           console.warn('Firestore updateUserProfile error:', e);
         }
+      } else if (request.email) {
+        const allUsers = MockDataService.getUsers();
+        const matchedUser = allUsers.find(u => u.email?.toLowerCase() === request.email?.toLowerCase());
+        if (matchedUser) {
+          MockDataService.updateUser(matchedUser.uid, { status: 'active', shopId: newShopId, role: 'owner' });
+          try {
+            await updateFirestoreUserProfile(matchedUser.uid, { status: 'active', shopId: newShopId, role: 'owner' });
+          } catch (e) {
+            console.warn('Firestore updateUserProfile error:', e);
+          }
+        }
       }
 
       await fetchAdminData();
@@ -832,7 +843,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Store className="w-5 h-5 text-blue-400" />
-            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">+12%</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0%</span>
           </div>
           <div className="text-2xl font-black text-white">{shops.length}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">المحلات الكلية</div>
@@ -842,7 +853,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <UserCheck className="w-5 h-5 text-purple-400" />
-            <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">نشط</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0</span>
           </div>
           <div className="text-2xl font-black text-white">{shopOwnersCount}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">أصحاب المحلات</div>
@@ -852,7 +863,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Users className="w-5 h-5 text-emerald-400" />
-            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">+18%</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0%</span>
           </div>
           <div className="text-2xl font-black text-white">{customersCount}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">الزبائن المسجلون</div>
@@ -862,7 +873,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Package className="w-5 h-5 text-amber-400" />
-            <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">+8 جديدة</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0 جديدة</span>
           </div>
           <div className="text-2xl font-black text-white">{products.length}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">المنتجات بالمتجر</div>
@@ -872,7 +883,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Wrench className="w-5 h-5 text-cyan-400" />
-            <span className="text-[10px] font-bold text-cyan-400 bg-cyan-500/10 px-1.5 py-0.5 rounded">95% نجاح</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0% نجاح</span>
           </div>
           <div className="text-2xl font-black text-white">{tickets.length}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">طلبات الصيانة</div>
@@ -882,7 +893,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Receipt className="w-5 h-5 text-indigo-400" />
-            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">موثقة</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0</span>
           </div>
           <div className="text-2xl font-black text-white">{invoices.length}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">الفواتير الكلية</div>
@@ -892,7 +903,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Building2 className="w-5 h-5 text-rose-400" />
-            <span className="text-[10px] font-bold text-rose-400 bg-rose-500/10 px-1.5 py-0.5 rounded">بالعراق</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0</span>
           </div>
           <div className="text-2xl font-black text-white">{totalBranchesCount}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">الفروع النشطة</div>
@@ -902,7 +913,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 transition-all hover:border-blue-500/50 shadow-lg">
           <div className="flex items-center justify-between mb-2">
             <Briefcase className="w-5 h-5 text-teal-400" />
-            <span className="text-[10px] font-bold text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded">فنيون</span>
+            <span className="text-[10px] font-bold text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">0</span>
           </div>
           <div className="text-2xl font-black text-white">{totalStaffCount}</div>
           <div className="text-[11px] font-bold text-slate-400 mt-1">الموظفون والفنيون</div>
@@ -1288,18 +1299,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
                 {/* Actions */}
                 <div className="flex items-center gap-2 pt-2 border-t border-slate-800">
                   <button
-                    onClick={() => handleUpdateShopStatus(s.id, s.status === 'suspended' ? 'approved' : 'suspended')}
-                    className="flex-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border border-amber-500/30 font-bold text-xs px-3 py-2 rounded-xl transition-all"
-                  >
-                    {s.status === 'suspended' ? 'تفعيل' : 'تعليق'}
-                  </button>
-
-                  <button
                     onClick={() => (onSelectShop ? onSelectShop(s) : setViewShopModal(s))}
-                    className="bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-bold text-xs p-2 rounded-xl transition-all"
+                    className="flex-1 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 font-bold text-xs py-2 px-3 rounded-xl transition-all flex items-center justify-center gap-1.5"
                     title="معاينة متجر المحل"
                   >
                     <Eye className="w-4 h-4" />
+                    <span>معاينة المتجر</span>
                   </button>
 
                   <button
@@ -1681,9 +1686,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
                     <td className="p-4 font-black text-emerald-400">{formatIQD(inv.totalIQD)}</td>
                     <td className="p-4 text-slate-400">{new Date(inv.createdAt).toLocaleDateString('ar-IQ')}</td>
                     <td className="p-4 text-center">
-                      <span className="text-[11px] text-slate-400 font-bold bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl inline-block">
-                        الطباعة لأصحاب المحلات فقط 🖨️
-                      </span>
+                      <div className="flex items-center justify-center gap-2">
+                        <span className="text-[11px] text-slate-400 font-bold bg-slate-950 border border-slate-800 px-3 py-1.5 rounded-xl inline-block">
+                          الطباعة لأصحاب المحلات فقط 🖨️
+                        </span>
+                        <button
+                          onClick={() => requestDeleteInvoice(inv.id, inv.invoiceNumber)}
+                          className="bg-red-600/20 hover:bg-red-600/30 text-red-400 p-2 rounded-xl border border-red-500/30 transition-all flex items-center justify-center gap-1"
+                          title="حذف الفاتورة نهائياً (خاص بالمالك)"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          <span>حذف</span>
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -1898,19 +1913,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onSelectShop }) 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
               <span className="text-xs font-bold text-slate-400">إجمالي التعاملات المباشرة</span>
-              <div className="text-3xl font-black text-emerald-400">{formatIQD(totalPlatformVolumeIQD)}</div>
+              <div className="text-3xl font-black text-emerald-400">{formatIQD(0)}</div>
               <p className="text-xs text-slate-500">تراكم الفواتير الصادرة عبر التطبيق</p>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
               <span className="text-xs font-bold text-slate-400">معدل نجاح الصيانة</span>
-              <div className="text-3xl font-black text-blue-400">98.4%</div>
+              <div className="text-3xl font-black text-blue-400">0%</div>
               <p className="text-xs text-slate-500">نسبة تذاكر الصيانة المسلمة بنجاح للزبائن</p>
             </div>
 
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-3">
               <span className="text-xs font-bold text-slate-400">توزيع المحلات بالمحافظات</span>
-              <div className="text-3xl font-black text-purple-400">12 محافظة</div>
+              <div className="text-3xl font-black text-purple-400">0 محافظة</div>
               <p className="text-xs text-slate-500">بغداد، أربيل، البصرة، النجف، والموصل...</p>
             </div>
           </div>
